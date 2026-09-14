@@ -4,6 +4,7 @@ export * from "./domain/agent.js";
 export * from "./domain/context.js";
 export * from "./domain/lifecycle.js";
 export * from "./domain/policy.js";
+export * from "./domain/task.js";
 export * from "./domain/workspace.js";
 export * from "./mcp/server.js";
 export * from "./storage/atomic.js";

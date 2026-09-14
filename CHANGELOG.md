@@ -6,6 +6,8 @@ All notable changes will be documented here.
 
 ### Added
 
+- Single-machine task leases with atomic SQLite claim transactions, conflict rejection, renewal, terminal release states and audited stale takeover.
+
 - Approved v1 product specification and architecture.
 - Buildable TypeScript repository foundation.
 - Experimental workspace initialization, status and MCP bootstrap surfaces.
