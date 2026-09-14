@@ -104,6 +104,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS context_fts USING fts5(
   tags
 );
 
+CREATE TRIGGER IF NOT EXISTS trg_context_items_ai AFTER INSERT ON context_items BEGIN
+  DELETE FROM context_fts WHERE context_id = new.id;
+  INSERT INTO context_fts (context_id, title, content, tags)
+  VALUES (new.id, new.title, new.content, new.tags_json);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_context_items_au AFTER UPDATE ON context_items BEGIN
+  DELETE FROM context_fts WHERE context_id = old.id;
+  INSERT INTO context_fts (context_id, title, content, tags)
+  VALUES (new.id, new.title, new.content, new.tags_json);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_context_items_ad AFTER DELETE ON context_items BEGIN
+  DELETE FROM context_fts WHERE context_id = old.id;
+END;
+
 CREATE INDEX IF NOT EXISTS idx_context_workspace_scope_status ON context_items(workspace_id, scope, status);
 CREATE INDEX IF NOT EXISTS idx_context_scope_status ON context_items(scope, status);
 CREATE INDEX IF NOT EXISTS idx_context_updated ON context_items(updated_at DESC);

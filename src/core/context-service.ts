@@ -38,7 +38,18 @@ import {
   type ReindexResult,
 } from "../storage/reconciliation.js";
 import { readWorkspaceStatus, workspacePaths } from "../workspace/layout.js";
-import { buildContextPack, type ContextPack } from "./pack-builder.js";
+import {
+  buildContextPack,
+  renderContextPackMarkdown,
+  sanitizeFtsQuery,
+  type CandidateWithScore,
+  type ContextPack,
+  type ContextPackBudget,
+  type ContextPackConflict,
+  type ContextPackItem,
+  type ContextPackOmission,
+  type PackBuilderOptions,
+} from "./pack-builder.js";
 
 export interface BaseContextInput {
   id?: string | undefined;
@@ -75,6 +86,47 @@ export interface QueryContextFilter {
   includeArchived?: boolean | undefined;
   includeProposed?: boolean | undefined;
   includeDraft?: boolean | undefined;
+}
+
+export interface SearchOptions {
+  workspaceId?: string | undefined;
+  scope?: ContextScope | undefined;
+  allowGlobal?: boolean | undefined;
+  types?: ContextType[] | undefined;
+  type?: ContextType | undefined;
+  status?: ContextStatus | undefined;
+  includeSuperseded?: boolean | undefined;
+  includeArchived?: boolean | undefined;
+  includeProposed?: boolean | undefined;
+  includeDraft?: boolean | undefined;
+  limit?: number | undefined;
+}
+
+export interface SearchResult {
+  item: ContextItem;
+  relevanceScore: number;
+  matchRank: number;
+}
+
+export interface BuildPackOptions {
+  workspaceId?: string | undefined;
+  client?: ActorContext | string | undefined;
+  clientId?: string | undefined;
+  policyId?: string | undefined;
+  allowGlobal?: boolean | undefined;
+  taskId?: string | undefined;
+  sessionId?: string | undefined;
+  query?: string | undefined;
+  scope?: ContextScope | undefined;
+  type?: ContextType | undefined;
+  types?: ContextType[] | undefined;
+  tags?: string[] | undefined;
+  maxTokens?: number | undefined;
+  includeSuperseded?: boolean | undefined;
+  includeArchived?: boolean | undefined;
+  includeProposed?: boolean | undefined;
+  includeDraft?: boolean | undefined;
+  timestamp?: string | undefined;
 }
 
 export interface AuditEventRecord {
@@ -541,13 +593,328 @@ export class ContextService {
     return items;
   }
 
-  buildDefaultPack(scope?: ContextScope | undefined): ContextPack {
-    const items = this.queryItems({
-      status: "approved",
-      scope: scope ?? undefined,
+  search(query: string, options?: SearchOptions): SearchResult[] {
+    const ftsQuery = sanitizeFtsQuery(query);
+    if (!ftsQuery) {
+      return [];
+    }
+
+    let rows: Array<{ context_id: string; rank: number }> = [];
+    try {
+      const sql = `
+        SELECT context_id, bm25(context_fts) as rank
+        FROM context_fts
+        WHERE context_fts MATCH ?
+        ORDER BY rank ASC
+      `;
+      rows = this.db.prepare(sql).all(ftsQuery) as Array<{
+        context_id: string;
+        rank: number;
+      }>;
+    } catch {
+      try {
+        const tokens = query.match(/[\p{L}\p{N}_]+/gu) || [];
+        if (tokens.length > 0) {
+          const fallbackQuery = tokens.map((t) => `"${t}"`).join(" OR ");
+          rows = this.db
+            .prepare(
+              `SELECT context_id, bm25(context_fts) as rank
+               FROM context_fts
+               WHERE context_fts MATCH ?
+               ORDER BY rank ASC`,
+            )
+            .all(fallbackQuery) as Array<{ context_id: string; rank: number }>;
+        }
+      } catch {
+        return [];
+      }
+    }
+
+    const results: SearchResult[] = [];
+    const targetWs = options?.workspaceId ?? this.workspaceId;
+
+    for (const row of rows) {
+      const item = this.getItem(row.context_id);
+      if (!item) continue;
+
+      if (item.workspaceId !== targetWs) {
+        if (item.scope === "global" && options?.allowGlobal) {
+          // allowed
+        } else {
+          continue;
+        }
+      } else if (item.scope === "global" && !options?.allowGlobal) {
+        continue;
+      }
+
+      if (options?.scope && item.scope !== options.scope) {
+        continue;
+      }
+
+      if (options?.type && item.type !== options.type) {
+        continue;
+      }
+      if (options?.types && !options.types.includes(item.type)) {
+        continue;
+      }
+
+      if (options?.status) {
+        if (item.status !== options.status) continue;
+      } else {
+        if (item.status === "superseded" && !options?.includeSuperseded)
+          continue;
+        if (item.status === "archived" && !options?.includeArchived) continue;
+        if (item.status === "proposed" && !options?.includeProposed) continue;
+        if (item.status === "draft" && !options?.includeDraft) continue;
+      }
+
+      results.push({
+        item,
+        relevanceScore: -row.rank,
+        matchRank: results.length + 1,
+      });
+
+      if (options?.limit && results.length >= options.limit) {
+        break;
+      }
+    }
+
+    return results;
+  }
+
+  buildPack(options?: BuildPackOptions): ContextPack {
+    // 1. Resolve client identity and workspace
+    const workspaceId = options?.workspaceId ?? this.workspaceId;
+    let resolvedClientId = "anonymous-client";
+    let clientKind = "unknown";
+    let clientProfile = "default";
+
+    if (options?.client) {
+      if (typeof options.client === "string") {
+        resolvedClientId = options.client;
+      } else {
+        resolvedClientId = options.client.actor;
+        clientKind = options.client.source;
+        clientProfile = options.client.profile ?? "default";
+      }
+    } else if (options?.clientId) {
+      resolvedClientId = options.clientId;
+    }
+
+    const agentRow = this.db
+      .prepare(
+        "SELECT id, display_name, client_kind, profile FROM agents WHERE id = ?",
+      )
+      .get(resolvedClientId) as
+      | {
+          id: string;
+          display_name: string;
+          client_kind: string;
+          profile: string;
+        }
+      | undefined;
+    if (agentRow) {
+      clientKind = agentRow.client_kind;
+      clientProfile = agentRow.profile;
+    }
+
+    // 2. Enforce policy
+    let allowGlobal = false;
+    let policyMaxBudget: number | undefined;
+    let activePolicyName: string | undefined;
+
+    let policyRow:
+      { id: string; name: string; policy_json: string } | undefined;
+    if (options?.policyId) {
+      policyRow = this.db
+        .prepare("SELECT id, name, policy_json FROM policies WHERE id = ?")
+        .get(options.policyId) as
+        { id: string; name: string; policy_json: string } | undefined;
+    } else {
+      policyRow = this.db
+        .prepare(
+          "SELECT id, name, policy_json FROM policies ORDER BY id ASC LIMIT 1",
+        )
+        .get() as { id: string; name: string; policy_json: string } | undefined;
+    }
+
+    if (policyRow) {
+      activePolicyName = policyRow.name;
+      try {
+        const parsed = JSON.parse(policyRow.policy_json);
+        if (parsed.allowGlobal === true) {
+          allowGlobal = true;
+        }
+        if (typeof parsed.maxBudget === "number") {
+          policyMaxBudget = parsed.maxBudget;
+        }
+      } catch {
+        // ignore JSON parse error
+      }
+    }
+
+    // Global context is included ONLY when policy explicitly allows it
+    if (options?.allowGlobal && allowGlobal) {
+      allowGlobal = true;
+    }
+
+    // 3. Resolve active task and session
+    let resolvedTaskId = options?.taskId;
+    let resolvedSessionId = options?.sessionId;
+
+    if (resolvedSessionId) {
+      const sessionRow = this.db
+        .prepare("SELECT id, task_id FROM sessions WHERE id = ?")
+        .get(resolvedSessionId) as
+        { id: string; task_id: string | null } | undefined;
+      if (sessionRow && !resolvedTaskId && sessionRow.task_id) {
+        resolvedTaskId = sessionRow.task_id;
+      }
+    } else if (resolvedClientId && resolvedClientId !== "anonymous-client") {
+      const activeSessionRow = this.db
+        .prepare(
+          "SELECT id, task_id FROM sessions WHERE agent_id = ? AND status = 'active' ORDER BY started_at DESC LIMIT 1",
+        )
+        .get(resolvedClientId) as
+        { id: string; task_id: string | null } | undefined;
+      if (activeSessionRow) {
+        resolvedSessionId = activeSessionRow.id;
+        if (!resolvedTaskId && activeSessionRow.task_id) {
+          resolvedTaskId = activeSessionRow.task_id;
+        }
+      }
+    }
+
+    if (
+      !resolvedTaskId &&
+      resolvedClientId &&
+      resolvedClientId !== "anonymous-client"
+    ) {
+      const leaseRow = this.db
+        .prepare(
+          "SELECT task_id FROM task_leases WHERE agent_id = ? AND expires_at > datetime('now') ORDER BY expires_at DESC LIMIT 1",
+        )
+        .get(resolvedClientId) as { task_id: string } | undefined;
+      if (leaseRow) {
+        resolvedTaskId = leaseRow.task_id;
+      }
+    }
+
+    // 4 & 5. Filter by status, query structured filters and FTS and supersedes links
+    const supersedesRows = this.db
+      .prepare("SELECT context_id, superseded_id FROM context_supersedes")
+      .all() as Array<{ context_id: string; superseded_id: string }>;
+
+    const replacementMap = new Map<string, string>();
+    for (const row of supersedesRows) {
+      replacementMap.set(row.superseded_id, row.context_id);
+    }
+
+    let ftsRelevanceMap = new Map<string, number>();
+    let ftsMatchedIds: Set<string> | null = null;
+
+    if (options?.query && options.query.trim()) {
+      const ftsQuery = sanitizeFtsQuery(options.query);
+      if (ftsQuery) {
+        try {
+          const ftsRows = this.db
+            .prepare(
+              `SELECT context_id, bm25(context_fts) as rank
+               FROM context_fts
+               WHERE context_fts MATCH ?
+               ORDER BY rank ASC`,
+            )
+            .all(ftsQuery) as Array<{ context_id: string; rank: number }>;
+          ftsMatchedIds = new Set<string>();
+          for (const row of ftsRows) {
+            ftsMatchedIds.add(row.context_id);
+            ftsRelevanceMap.set(row.context_id, -row.rank);
+          }
+        } catch {
+          ftsMatchedIds = new Set<string>();
+        }
+      } else {
+        ftsMatchedIds = new Set<string>();
+      }
+    }
+
+    // Candidate query from SQLite
+    const allDbRows = this.db
+      .prepare(
+        "SELECT id FROM context_items WHERE workspace_id = ? OR scope = 'global' ORDER BY id ASC",
+      )
+      .all(workspaceId) as Array<{ id: string }>;
+
+    const candidateItems: CandidateWithScore[] = [];
+
+    for (const row of allDbRows) {
+      if (ftsMatchedIds !== null && !ftsMatchedIds.has(row.id)) {
+        continue;
+      }
+
+      const item = this.getItem(row.id);
+      if (!item) continue;
+
+      if (options?.type && item.type !== options.type) continue;
+      if (options?.types && !options.types.includes(item.type)) continue;
+      if (options?.tags && options.tags.length > 0) {
+        const hasTag = options.tags.some((t) => item.tags?.includes(t));
+        if (!hasTag) continue;
+      }
+
+      const relevance = ftsRelevanceMap.get(item.id) ?? 0;
+      candidateItems.push({
+        ...item,
+        relevanceScore: relevance,
+      });
+    }
+
+    // Deterministic timestamp from workspace state
+    let packTimestamp = options?.timestamp;
+    if (!packTimestamp) {
+      const maxTimeRow = this.db
+        .prepare(
+          "SELECT MAX(updated_at) as latest FROM context_items WHERE workspace_id = ?",
+        )
+        .get(workspaceId) as { latest: string | null } | undefined;
+      if (maxTimeRow?.latest) {
+        packTimestamp = maxTimeRow.latest;
+      } else {
+        const wsRow = this.db
+          .prepare("SELECT created_at FROM workspace WHERE id = ?")
+          .get(workspaceId) as { created_at: string } | undefined;
+        packTimestamp = wsRow?.created_at ?? new Date().toISOString();
+      }
+    }
+
+    // 6, 7 & 8: Ranking, Token budgeting, Provenance, Conflicts, Omissions
+    const budget = options?.maxTokens ?? policyMaxBudget;
+
+    return buildContextPack(candidateItems, {
+      workspaceId,
+      generatedAt: packTimestamp,
+      query: options?.query,
+      scope: options?.scope,
+      taskId: resolvedTaskId,
+      sessionId: resolvedSessionId,
+      clientId: resolvedClientId,
+      allowGlobal,
+      activePolicyName,
+      maxTokens: budget,
+      includeSuperseded: options?.includeSuperseded,
+      includeArchived: options?.includeArchived,
+      includeProposed: options?.includeProposed,
+      includeDraft: options?.includeDraft,
+      replacementMap,
     });
-    return buildContextPack(items, {
-      workspaceId: this.workspaceId,
+  }
+
+  retrieve(options?: BuildPackOptions): ContextPack {
+    return this.buildPack(options);
+  }
+
+  buildDefaultPack(scope?: ContextScope | undefined): ContextPack {
+    return this.buildPack({
       scope: scope ?? undefined,
       includeSuperseded: false,
       includeArchived: false,

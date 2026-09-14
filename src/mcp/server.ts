@@ -214,22 +214,78 @@ export function createServer(options?: McpServerOptions): McpServer {
   );
 
   server.registerTool(
+    "context_search",
+    {
+      description:
+        "Search workspace knowledge using SQLite FTS5 full-text search.",
+      inputSchema: {
+        workspace: z.string().optional(),
+        query: z.string().min(1),
+        scope: contextScopeSchema.optional(),
+        allowGlobal: z.boolean().optional(),
+        limit: z.number().int().positive().optional(),
+      },
+    },
+    async ({ workspace, query, scope, allowGlobal, limit }) => {
+      const service = getService(workspace);
+      try {
+        const results = service.search(query, {
+          scope,
+          allowGlobal,
+          limit,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          structuredContent: { results },
+        };
+      } finally {
+        service.close();
+      }
+    },
+  );
+
+  server.registerTool(
     "context_pack",
     {
       description:
-        "Retrieve the deterministic default context pack of approved knowledge.",
+        "Retrieve the deterministic token-budgeted context pack of approved knowledge.",
       inputSchema: {
         workspace: z.string().optional(),
+        query: z.string().optional(),
         scope: contextScopeSchema.optional(),
+        taskId: z.string().optional(),
+        sessionId: z.string().optional(),
+        maxTokens: z.number().int().positive().optional(),
+        allowGlobal: z.boolean().optional(),
       },
     },
-    async ({ workspace, scope }) => {
+    async ({
+      workspace,
+      query,
+      scope,
+      taskId,
+      sessionId,
+      maxTokens,
+      allowGlobal,
+    }) => {
       const service = getService(workspace);
-      const pack = service.buildDefaultPack(scope);
-      return {
-        content: [{ type: "text", text: JSON.stringify(pack, null, 2) }],
-        structuredContent: { ...pack },
-      };
+      try {
+        const pack = service.buildPack({
+          query,
+          scope,
+          taskId,
+          sessionId,
+          maxTokens,
+          allowGlobal,
+          client: serverActor,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(pack, null, 2) }],
+          structuredContent: { ...pack },
+        };
+      } finally {
+        service.close();
+      }
     },
   );
 

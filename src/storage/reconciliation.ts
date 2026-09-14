@@ -12,7 +12,11 @@ import type Database from "better-sqlite3";
 
 import { type ContextItem } from "../domain/context.js";
 import { readWorkspaceStatus, workspacePaths } from "../workspace/layout.js";
-import { isDatabaseHealthy, openDatabase } from "./database.js";
+import {
+  isDatabaseHealthy,
+  openDatabase,
+  rebuildFtsIndex,
+} from "./database.js";
 import { parseMarkdownKnowledgeItem } from "./markdown.js";
 
 export interface ReconciliationConflict {
@@ -345,10 +349,21 @@ export function reindexWorkspace(
   database?: Database.Database,
   options?: ReindexOptions,
 ): ReindexResult {
-  return reconcileWorkspace(workspaceRoot, database, {
-    cleanDeleted: true,
-    ...options,
-  });
+  const paths = workspacePaths(workspaceRoot);
+  const ownsDatabase = !database;
+  const db = database ?? openDatabase(paths.database);
+  try {
+    const result = reconcileWorkspace(workspaceRoot, db, {
+      cleanDeleted: true,
+      ...options,
+    });
+    rebuildFtsIndex(db);
+    return result;
+  } finally {
+    if (ownsDatabase) {
+      db.close();
+    }
+  }
 }
 
 export function recoverDatabase(workspaceRoot: string): RecoveryResult {
