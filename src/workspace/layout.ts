@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
 import YAML from "yaml";
@@ -8,6 +8,7 @@ import {
   workspaceManifestSchema,
   type WorkspaceManifest,
 } from "../domain/workspace.js";
+import { writeAtomicFile } from "../storage/atomic.js";
 import { openDatabase } from "../storage/database.js";
 
 const knowledgeFolders = [
@@ -74,7 +75,7 @@ export function initializeWorkspace(
     createdAt: new Date().toISOString(),
     storage: { knowledge: "markdown", operations: "sqlite", search: "fts5" },
   };
-  writeFileSync(paths.manifest, YAML.stringify(manifest), {
+  writeAtomicFile(paths.manifest, YAML.stringify(manifest), {
     encoding: "utf8",
     flag: "wx",
   });

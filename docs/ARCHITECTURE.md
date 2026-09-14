@@ -31,6 +31,7 @@ Adapters translate requests only. Domain rules, storage ownership, policy and co
 ├── pact.yaml
 ├── knowledge/
 │   ├── rules/
+│   ├── preferences/
 │   ├── facts/
 │   ├── goals/
 │   ├── decisions/
