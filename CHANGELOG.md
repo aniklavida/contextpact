@@ -6,6 +6,12 @@ All notable changes will be documented here.
 
 ### Added
 
+- Transport-independent core command surface exposed identically across CLI commands and MCP tools covering bootstrap, context, decisions, tasks, and handoffs.
+- Profile-based tool exposure ensuring default agent profiles never see approval tools, while elevated reviewer and human profiles retain approval capability.
+- Parity test suite enumerating CLI commands and MCP tools to prevent undocumented interface drift over time.
+- Expanded CLI surface with `propose`, `get`, `archive`, `decision` (`propose`), `task` (`create`, `claim`, `release`, `get`, `list`), and `handoff` (`create`, `get`, `resume`).
+- Expanded MCP surface with `decision_propose`, `task_create`, `task_claim`, `task_release`, and `task_get`, holding the tool surface inside the 10-15 composable tool band.
+- Documented interface differences for offline maintenance (`reindex`, `reconcile`), filesystem bootstrap (`init`), and stdio runner (`mcp`).
 - Evidence-bearing structured handoffs split between human-readable Markdown narratives and atomic SQLite operational records, requiring verified evidence for success claims, enforcing single next action discipline, and enabling multi-process task resumption.
 - Single-machine task leases with atomic SQLite claim transactions, conflict rejection, renewal, terminal release states and audited stale takeover.
 

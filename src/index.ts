@@ -1,5 +1,6 @@
 export * from "./core/context-service.js";
 export * from "./core/pack-builder.js";
+export * from "./core/surface.js";
 export * from "./domain/agent.js";
 export * from "./domain/context.js";
 export * from "./domain/handoff.js";
