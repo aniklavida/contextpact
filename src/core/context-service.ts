@@ -339,6 +339,22 @@ export class ContextService {
     return agent;
   }
 
+  ensureAgent(
+    id: string,
+    options?: { displayName?: string; clientKind?: string; profile?: string },
+  ): AgentRecord {
+    const existing = this.getAgent(id);
+    if (existing) {
+      return existing;
+    }
+    return this.registerAgent({
+      id,
+      displayName: options?.displayName ?? id,
+      clientKind: options?.clientKind ?? "agent",
+      profile: options?.profile ?? "default",
+    });
+  }
+
   getAgent(id: string): AgentRecord | null {
     const row = this.db
       .prepare(
@@ -976,6 +992,19 @@ export class ContextService {
       status: "proposed",
     };
     return this.create(payload, actor);
+  }
+
+  proposeDecision(
+    input: Omit<BaseContextInput, "type">,
+    actor: ActorContext,
+  ): ContextItem {
+    return this.propose(
+      {
+        ...input,
+        type: "decision",
+      } as ProposeContextInput,
+      actor,
+    );
   }
 
   approve(id: string, actor: ActorContext): ContextItem {
@@ -2259,6 +2288,70 @@ export class ContextService {
       .immediate();
 
     return newLease;
+  }
+
+  claimTask(input: {
+    taskId: string;
+    agentId: string;
+    ttlSeconds?: number | undefined;
+    scope?: string[] | undefined;
+    takeoverReason?: string | undefined;
+  }): LeaseRecord {
+    this.ensureAgent(input.agentId);
+    if (input.takeoverReason && input.takeoverReason.trim().length > 0) {
+      return this.takeoverLease({
+        taskId: input.taskId,
+        agentId: input.agentId,
+        reason: input.takeoverReason,
+        ttlSeconds: input.ttlSeconds ?? 300,
+        scope: input.scope ?? [],
+      });
+    }
+
+    const existing = this.getLease(input.taskId);
+    const nowIso = new Date().toISOString();
+    if (
+      existing &&
+      existing.agentId === input.agentId &&
+      existing.expiresAt > nowIso
+    ) {
+      return this.renewLease({
+        taskId: input.taskId,
+        agentId: input.agentId,
+        ttlSeconds: input.ttlSeconds ?? 300,
+      });
+    }
+
+    return this.claimLease({
+      taskId: input.taskId,
+      agentId: input.agentId,
+      ttlSeconds: input.ttlSeconds ?? 300,
+      scope: input.scope ?? [],
+    });
+  }
+
+  releaseTask(input: {
+    taskId: string;
+    agentId: string;
+    finalStatus?: "review" | "done" | "blocked" | "planned" | undefined;
+  }): TaskRecord {
+    this.ensureAgent(input.agentId);
+    return this.releaseLease({
+      taskId: input.taskId,
+      agentId: input.agentId,
+      finalStatus: input.finalStatus ?? "review",
+    });
+  }
+
+  getTaskWithLease(
+    taskId: string,
+  ): { task: TaskRecord; lease: LeaseRecord | null } | null {
+    const task = this.getTask(taskId);
+    if (!task) {
+      return null;
+    }
+    const lease = this.getLease(taskId);
+    return { task, lease };
   }
 
   private writeAuditEvent(event: {

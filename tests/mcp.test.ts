@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  ApprovalGateError,
   ContextService,
   createServer,
   initializeWorkspace,
@@ -47,8 +48,12 @@ describe("MCP Server approval gate and lifecycle tools", () => {
     const defaultServer = createServer({ workspaceRoot: tempDir });
 
     const proposeTool = getTool(defaultServer, "context_propose");
-    const approveTool = getTool(defaultServer, "context_approve");
     const getToolFn = getTool(defaultServer, "context_get");
+
+    // Profile-based tool exposure: the default profile never sees approval tools
+    expect(() => getTool(defaultServer, "context_approve")).toThrow(
+      "Tool 'context_approve' not found on MCP server",
+    );
 
     // Propose durable knowledge
     const proposeResult = (await proposeTool(
@@ -70,21 +75,16 @@ describe("MCP Server approval gate and lifecycle tools", () => {
     expect(proposeResult.structuredContent?.status).toBe("proposed");
     expect(proposeResult.structuredContent?.actor).toBe("mcp-agent");
 
-    // Attempt to approve via the same default MCP profile
-    const approveResult = (await approveTool(
-      {
-        workspace: tempDir,
-        id: "dec-auth-boundary",
-      },
-      {},
-    )) as { isError?: boolean; content: Array<{ text: string }> };
-
-    // Assert the refusal rather than the happy path
-    expect(approveResult.isError).toBe(true);
-    expect(approveResult.content[0]?.text).toContain("Approval gate refusal");
-    expect(approveResult.content[0]?.text).toContain(
-      "Default profile cannot approve durable knowledge",
-    );
+    // Attempt to approve via the core service directly with the default MCP actor refuses
+    const service = new ContextService(tempDir);
+    expect(() =>
+      service.approve("dec-auth-boundary", {
+        actor: "mcp-agent",
+        source: "agent",
+        profile: "default",
+      }),
+    ).toThrow(ApprovalGateError);
+    service.close();
 
     // Verify the proposal remains strictly in 'proposed' status
     const getResult = (await getToolFn(
@@ -408,5 +408,129 @@ describe("MCP Server approval gate and lifecycle tools", () => {
     expect(resumeResult.structuredContent?.nextAction).toBe(
       "Run performance test suite",
     );
+  });
+
+  it("proposes decisions and manages task lifecycle via MCP tools", async () => {
+    const server = createServer({ workspaceRoot: tempDir });
+    const decisionTool = getTool(server, "decision_propose");
+    const taskCreateTool = getTool(server, "task_create");
+    const taskClaimTool = getTool(server, "task_claim");
+    const taskGetTool = getTool(server, "task_get");
+    const taskReleaseTool = getTool(server, "task_release");
+
+    // 1. Propose decision via decision_propose
+    const decResult = (await decisionTool(
+      {
+        workspace: tempDir,
+        id: "dec-mcp-parity",
+        title: "Parity between interfaces",
+        content:
+          "Expose identical command surface over one transport-independent core.",
+        tags: ["architecture", "parity"],
+      },
+      {},
+    )) as { isError?: boolean; structuredContent?: ContextItem };
+
+    expect(decResult.isError).toBeFalsy();
+    expect(decResult.structuredContent?.id).toBe("dec-mcp-parity");
+    expect(decResult.structuredContent?.type).toBe("decision");
+    expect(decResult.structuredContent?.status).toBe("proposed");
+
+    // 2. Create task via task_create
+    const taskResult = (await taskCreateTool(
+      {
+        workspace: tempDir,
+        id: "task-surface-parity",
+        title: "Implement CLI and MCP parity",
+        description: "Align command surfaces over one core",
+        scope: ["src/cli.ts", "src/mcp/server.ts"],
+      },
+      {},
+    )) as {
+      isError?: boolean;
+      structuredContent?: { id: string; status: string };
+    };
+
+    expect(taskResult.isError).toBeFalsy();
+    expect(taskResult.structuredContent?.id).toBe("task-surface-parity");
+    expect(taskResult.structuredContent?.status).toBe("planned");
+
+    // 3. Claim task lease via task_claim
+    const claimResult = (await taskClaimTool(
+      {
+        workspace: tempDir,
+        taskId: "task-surface-parity",
+        agentId: "agent-builder",
+        ttlSeconds: 600,
+      },
+      {},
+    )) as {
+      isError?: boolean;
+      structuredContent?: {
+        taskId: string;
+        agentId: string;
+        expiresAt: string;
+      };
+    };
+
+    expect(claimResult.isError).toBeFalsy();
+    expect(claimResult.structuredContent?.taskId).toBe("task-surface-parity");
+    expect(claimResult.structuredContent?.agentId).toBe("agent-builder");
+
+    // 4. Get task state via task_get
+    const getTaskResult = (await taskGetTool(
+      {
+        workspace: tempDir,
+        id: "task-surface-parity",
+      },
+      {},
+    )) as {
+      isError?: boolean;
+      structuredContent?: {
+        task: { id: string; status: string };
+        lease: { agentId: string };
+      };
+    };
+
+    expect(getTaskResult.isError).toBeFalsy();
+    expect(getTaskResult.structuredContent?.task.id).toBe(
+      "task-surface-parity",
+    );
+    expect(getTaskResult.structuredContent?.lease.agentId).toBe(
+      "agent-builder",
+    );
+
+    // 5. Release task lease via task_release
+    const releaseResult = (await taskReleaseTool(
+      {
+        workspace: tempDir,
+        taskId: "task-surface-parity",
+        agentId: "agent-builder",
+        status: "done",
+      },
+      {},
+    )) as {
+      isError?: boolean;
+      structuredContent?: { id: string; status: string };
+    };
+
+    expect(releaseResult.isError).toBeFalsy();
+    expect(releaseResult.structuredContent?.status).toBe("done");
+
+    // Verify lease is now cleared in task_get
+    const afterRelease = (await taskGetTool(
+      {
+        workspace: tempDir,
+        id: "task-surface-parity",
+      },
+      {},
+    )) as {
+      structuredContent?: {
+        task: { status: string };
+        lease: null;
+      };
+    };
+    expect(afterRelease.structuredContent?.task.status).toBe("done");
+    expect(afterRelease.structuredContent?.lease).toBeNull();
   });
 });

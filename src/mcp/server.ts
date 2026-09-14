@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { ContextService } from "../core/context-service.js";
+import { taskStatusSchema } from "../domain/agent.js";
 import {
   contextScopeSchema,
   contextTypeSchema,
@@ -10,6 +11,7 @@ import {
 } from "../domain/context.js";
 import {
   DEFAULT_MCP_ACTOR,
+  isActorElevated,
   isOperationalContextType,
   type ActorContext,
 } from "../domain/lifecycle.js";
@@ -46,29 +48,6 @@ export function createServer(options?: McpServerOptions): McpServer {
       const structuredContent: Record<string, unknown> = { ...status };
       return {
         content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
-        structuredContent,
-      };
-    },
-  );
-
-  server.registerTool(
-    "context_bootstrap",
-    {
-      description:
-        "Return the current foundation-level workspace identity and storage status.",
-      inputSchema: { workspace: z.string().optional() },
-    },
-    async ({ workspace }) => {
-      const status = readWorkspaceStatus(workspace ?? options?.workspaceRoot);
-      const message = status.initialized
-        ? `ContextPact workspace '${status.manifest?.name}' is initialized.`
-        : "No ContextPact workspace is initialized at this location.";
-      const structuredContent: Record<string, unknown> = {
-        ...status,
-        message,
-      };
-      return {
-        content: [{ type: "text", text: message }],
         structuredContent,
       };
     },
@@ -155,42 +134,44 @@ export function createServer(options?: McpServerOptions): McpServer {
     },
   );
 
-  server.registerTool(
-    "context_approve",
-    {
-      description:
-        "Approve a proposed context item through the approval gate. Blocked for default agent profiles.",
-      inputSchema: {
-        workspace: z.string().optional(),
-        id: z.string().min(1),
+  if (isActorElevated(serverActor)) {
+    server.registerTool(
+      "context_approve",
+      {
+        description:
+          "Approve a proposed context item through the approval gate. Available only to elevated or human profiles.",
+        inputSchema: {
+          workspace: z.string().optional(),
+          id: z.string().min(1),
+        },
       },
-    },
-    async ({ workspace, id }) => {
-      try {
-        const service = getService(workspace);
-        const item = service.approve(id, serverActor);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Context item '${item.id}' approved successfully.`,
-            },
-          ],
-          structuredContent: { ...item },
-        };
-      } catch (error) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: error instanceof Error ? error.message : String(error),
-            },
-          ],
-        };
-      }
-    },
-  );
+      async ({ workspace, id }) => {
+        try {
+          const service = getService(workspace);
+          const item = service.approve(id, serverActor);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Context item '${item.id}' approved successfully.`,
+              },
+            ],
+            structuredContent: { ...item },
+          };
+        } catch (error) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: error instanceof Error ? error.message : String(error),
+              },
+            ],
+          };
+        }
+      },
+    );
+  }
 
   server.registerTool(
     "context_get",
@@ -327,6 +308,242 @@ export function createServer(options?: McpServerOptions): McpServer {
           ],
         };
       }
+    },
+  );
+
+  server.registerTool(
+    "decision_propose",
+    {
+      description:
+        "Propose an architectural or product decision for durable knowledge in the workspace.",
+      inputSchema: {
+        workspace: z.string().optional(),
+        id: z.string().optional(),
+        title: z.string().min(1),
+        content: z.string().default(""),
+        scope: contextScopeSchema.optional(),
+        importance: importanceSchema.optional(),
+        tags: z.array(z.string()).optional(),
+        supersedes: z.array(z.string()).optional(),
+      },
+    },
+    async ({
+      workspace,
+      id,
+      title,
+      content,
+      scope,
+      importance,
+      tags,
+      supersedes,
+    }) => {
+      try {
+        const service = getService(workspace);
+        const item = service.proposeDecision(
+          {
+            id,
+            title,
+            content,
+            scope,
+            importance,
+            tags,
+            supersedes,
+          },
+          serverActor,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Decision '${item.id}' proposed successfully with status '${item.status}'.`,
+            },
+          ],
+          structuredContent: { ...item },
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "task_create",
+    {
+      description: "Create a coordination task in the workspace.",
+      inputSchema: {
+        workspace: z.string().optional(),
+        id: z.string().optional(),
+        title: z.string().min(1),
+        description: z.string().optional(),
+        status: taskStatusSchema.optional(),
+        scope: z.array(z.string()).optional(),
+      },
+    },
+    async ({ workspace, id, title, description, status, scope }) => {
+      try {
+        const service = getService(workspace);
+        const task = service.createTask(
+          {
+            id,
+            title,
+            description: description ?? "",
+            status: status ?? "planned",
+            scope: scope ?? [],
+          },
+          serverActor,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Task '${task.id}' created with status '${task.status}'.`,
+            },
+          ],
+          structuredContent: { ...task },
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "task_claim",
+    {
+      description:
+        "Claim, renew, or takeover a task lease for an agent process.",
+      inputSchema: {
+        workspace: z.string().optional(),
+        taskId: z.string().min(1),
+        agentId: z.string().optional(),
+        ttlSeconds: z.number().int().positive().optional(),
+        scope: z.array(z.string()).optional(),
+        takeoverReason: z.string().optional(),
+      },
+    },
+    async ({
+      workspace,
+      taskId,
+      agentId,
+      ttlSeconds,
+      scope,
+      takeoverReason,
+    }) => {
+      try {
+        const service = getService(workspace);
+        const effectiveAgentId = agentId ?? serverActor.actor;
+        const lease = service.claimTask({
+          taskId,
+          agentId: effectiveAgentId,
+          ttlSeconds,
+          scope,
+          takeoverReason,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Task '${taskId}' lease claimed by '${lease.agentId}' until ${lease.expiresAt}.`,
+            },
+          ],
+          structuredContent: { ...lease },
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "task_release",
+    {
+      description: "Release an active task lease and transition task status.",
+      inputSchema: {
+        workspace: z.string().optional(),
+        taskId: z.string().min(1),
+        agentId: z.string().optional(),
+        status: z.enum(["review", "done", "blocked", "planned"]).optional(),
+      },
+    },
+    async ({ workspace, taskId, agentId, status }) => {
+      try {
+        const service = getService(workspace);
+        const effectiveAgentId = agentId ?? serverActor.actor;
+        const task = service.releaseTask({
+          taskId,
+          agentId: effectiveAgentId,
+          finalStatus: status ?? "review",
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Task '${task.id}' lease released with status '${task.status}'.`,
+            },
+          ],
+          structuredContent: { ...task },
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "task_get",
+    {
+      description:
+        "Retrieve a task by ID, including its current status, scope, and active lease.",
+      inputSchema: {
+        workspace: z.string().optional(),
+        id: z.string().min(1),
+      },
+    },
+    async ({ workspace, id }) => {
+      const service = getService(workspace);
+      const record = service.getTaskWithLease(id);
+      if (!record) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Task '${id}' not found.` }],
+        };
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify(record, null, 2) }],
+        structuredContent: { ...record },
+      };
     },
   );
 
