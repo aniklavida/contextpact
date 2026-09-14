@@ -7,5 +7,7 @@ export * from "./mcp/server.js";
 export * from "./storage/atomic.js";
 export * from "./storage/database.js";
 export * from "./storage/markdown.js";
+export * from "./storage/migrations.js";
+export * from "./storage/reconciliation.js";
 export * from "./storage/schema.js";
 export * from "./workspace/layout.js";
