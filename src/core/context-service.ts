@@ -4,6 +4,19 @@ import { existsSync, readFileSync } from "node:fs";
 import type Database from "better-sqlite3";
 
 import {
+  createTaskSchema,
+  registerAgentSchema,
+  startSessionSchema,
+  type AgentRecord,
+  type CreateTaskInput,
+  type RegisterAgentInput,
+  type SessionRecord,
+  type SessionStatus,
+  type StartSessionInput,
+  type TaskRecord,
+  type TaskStatus,
+} from "../domain/agent.js";
+import {
   contextItemSchema,
   type ContextItem,
   type ContextScope,
@@ -21,6 +34,13 @@ import {
   validateTransition,
   type ActorContext,
 } from "../domain/lifecycle.js";
+import {
+  createPolicySchema,
+  isScopeVisibleByPolicy,
+  type CreatePolicyInput,
+  type PolicyRecord,
+  type PolicyRules,
+} from "../domain/policy.js";
 import { openDatabase } from "../storage/database.js";
 import {
   readMarkdownKnowledgeItem,
@@ -92,6 +112,8 @@ export interface SearchOptions {
   workspaceId?: string | undefined;
   scope?: ContextScope | undefined;
   allowGlobal?: boolean | undefined;
+  policyId?: string | undefined;
+  allowedScopes?: ContextScope[] | undefined;
   types?: ContextType[] | undefined;
   type?: ContextType | undefined;
   status?: ContextStatus | undefined;
@@ -177,7 +199,667 @@ export class ContextService {
     return this.db;
   }
 
+  resolveActor(actor: ActorContext | string): ActorContext {
+    if (typeof actor === "string") {
+      const agent = this.getAgent(actor);
+      if (agent) {
+        this.touchAgent(agent.id);
+        return {
+          actor: agent.id,
+          source: agent.clientKind === "human" ? "human" : "agent",
+          profile: agent.profile,
+        };
+      }
+      return {
+        actor,
+        source: "agent",
+        profile: "default",
+      };
+    }
+
+    const agent = this.getAgent(actor.actor);
+    if (agent) {
+      this.touchAgent(agent.id);
+      return {
+        actor: agent.id,
+        source:
+          actor.source ?? (agent.clientKind === "human" ? "human" : "agent"),
+        profile: agent.profile,
+      };
+    }
+
+    return {
+      actor: actor.actor,
+      source: actor.source,
+      profile:
+        actor.profile ?? (actor.source === "human" ? "human" : "default"),
+    };
+  }
+
+  touchAgent(id: string, timestamp?: string): void {
+    const now = timestamp ?? new Date().toISOString();
+    this.db
+      .prepare("UPDATE agents SET last_seen_at = ? WHERE id = ?")
+      .run(now, id);
+  }
+
+  heartbeatAgent(id: string, timestamp?: string): AgentRecord {
+    const now = timestamp ?? new Date().toISOString();
+    const info = this.db
+      .prepare("UPDATE agents SET last_seen_at = ? WHERE id = ?")
+      .run(now, id);
+    if (info.changes === 0) {
+      throw new Error(`Agent '${id}' not found.`);
+    }
+    const agent = this.getAgent(id);
+    return agent!;
+  }
+
+  registerAgent(input: RegisterAgentInput, actor?: ActorContext): AgentRecord {
+    const validated = registerAgentSchema.parse(input);
+    const id = validated.id?.trim() || `agent-${randomUUID()}`;
+    const now = new Date().toISOString();
+
+    const upsertSql = `
+      INSERT INTO agents (id, display_name, client_kind, profile, last_seen_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        display_name = excluded.display_name,
+        client_kind = excluded.client_kind,
+        profile = excluded.profile,
+        last_seen_at = excluded.last_seen_at;
+    `;
+
+    this.db
+      .prepare(upsertSql)
+      .run(
+        id,
+        validated.displayName,
+        validated.clientKind,
+        validated.profile,
+        now,
+        now,
+      );
+
+    const agent: AgentRecord = {
+      id,
+      displayName: validated.displayName,
+      clientKind: validated.clientKind,
+      profile: validated.profile,
+      lastSeenAt: now,
+      createdAt: now,
+    };
+
+    this.writeAuditEvent({
+      event_type: "agent.registered",
+      actor: actor?.actor ?? id,
+      entity_type: "agent",
+      entity_id: id,
+      previous_version: null,
+      payload: {
+        display_name: agent.displayName,
+        client_kind: agent.clientKind,
+        profile: agent.profile,
+      },
+      created_at: now,
+    });
+
+    return agent;
+  }
+
+  getAgent(id: string): AgentRecord | null {
+    const row = this.db
+      .prepare(
+        "SELECT id, display_name, client_kind, profile, last_seen_at, created_at FROM agents WHERE id = ?",
+      )
+      .get(id) as
+      | {
+          id: string;
+          display_name: string;
+          client_kind: string;
+          profile: string;
+          last_seen_at: string | null;
+          created_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      displayName: row.display_name,
+      clientKind: row.client_kind,
+      profile: row.profile,
+      lastSeenAt: row.last_seen_at,
+      createdAt: row.created_at,
+    };
+  }
+
+  listAgents(): AgentRecord[] {
+    const rows = this.db
+      .prepare(
+        "SELECT id, display_name, client_kind, profile, last_seen_at, created_at FROM agents ORDER BY created_at ASC",
+      )
+      .all() as Array<{
+      id: string;
+      display_name: string;
+      client_kind: string;
+      profile: string;
+      last_seen_at: string | null;
+      created_at: string;
+    }>;
+
+    return rows.map((r) => ({
+      id: r.id,
+      displayName: r.display_name,
+      clientKind: r.client_kind,
+      profile: r.profile,
+      lastSeenAt: r.last_seen_at,
+      createdAt: r.created_at,
+    }));
+  }
+
+  startSession(input: StartSessionInput, actor?: ActorContext): SessionRecord {
+    const validated = startSessionSchema.parse(input);
+    const agent = this.getAgent(validated.agentId);
+    if (!agent) {
+      throw new Error(
+        `Cannot start session: Agent '${validated.agentId}' is not registered.`,
+      );
+    }
+
+    if (validated.taskId) {
+      const task = this.getTask(validated.taskId);
+      if (!task) {
+        throw new Error(
+          `Cannot start session: Task '${validated.taskId}' not found.`,
+        );
+      }
+    }
+
+    const id = validated.id?.trim() || `session-${randomUUID()}`;
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `INSERT INTO sessions (id, agent_id, task_id, status, started_at, ended_at)
+         VALUES (?, ?, ?, 'active', ?, NULL)`,
+      )
+      .run(id, validated.agentId, validated.taskId ?? null, now);
+
+    this.touchAgent(validated.agentId, now);
+
+    const session: SessionRecord = {
+      id,
+      agentId: validated.agentId,
+      taskId: validated.taskId ?? null,
+      status: "active",
+      startedAt: now,
+      endedAt: null,
+    };
+
+    this.writeAuditEvent({
+      event_type: "session.started",
+      actor: actor?.actor ?? validated.agentId,
+      entity_type: "session",
+      entity_id: id,
+      previous_version: null,
+      payload: {
+        agent_id: session.agentId,
+        task_id: session.taskId,
+        status: "active",
+      },
+      created_at: now,
+    });
+
+    return session;
+  }
+
+  endSession(id: string, actor?: ActorContext): SessionRecord {
+    const existing = this.getSession(id);
+    if (!existing) {
+      throw new Error(`Session '${id}' not found.`);
+    }
+
+    if (existing.status !== "active") {
+      throw new Error(
+        `Cannot end session '${id}': session is not active (current status: '${existing.status}').`,
+      );
+    }
+
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        "UPDATE sessions SET status = 'ended', ended_at = ? WHERE id = ?",
+      )
+      .run(now, id);
+
+    this.touchAgent(existing.agentId, now);
+
+    const updated: SessionRecord = {
+      ...existing,
+      status: "ended",
+      endedAt: now,
+    };
+
+    this.writeAuditEvent({
+      event_type: "session.ended",
+      actor: actor?.actor ?? existing.agentId,
+      entity_type: "session",
+      entity_id: id,
+      previous_version: null,
+      payload: {
+        agent_id: existing.agentId,
+        task_id: existing.taskId,
+        from_status: "active",
+        to_status: "ended",
+      },
+      created_at: now,
+    });
+
+    return updated;
+  }
+
+  failSession(
+    id: string,
+    options?: { reason?: string | undefined },
+    actor?: ActorContext,
+  ): SessionRecord {
+    const existing = this.getSession(id);
+    if (!existing) {
+      throw new Error(`Session '${id}' not found.`);
+    }
+
+    if (existing.status !== "active") {
+      throw new Error(
+        `Cannot fail session '${id}': session is not active (current status: '${existing.status}').`,
+      );
+    }
+
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        "UPDATE sessions SET status = 'failed', ended_at = ? WHERE id = ?",
+      )
+      .run(now, id);
+
+    this.touchAgent(existing.agentId, now);
+
+    const updated: SessionRecord = {
+      ...existing,
+      status: "failed",
+      endedAt: now,
+    };
+
+    this.writeAuditEvent({
+      event_type: "session.failed",
+      actor: actor?.actor ?? existing.agentId,
+      entity_type: "session",
+      entity_id: id,
+      previous_version: null,
+      payload: {
+        agent_id: existing.agentId,
+        task_id: existing.taskId,
+        from_status: "active",
+        to_status: "failed",
+        reason: options?.reason,
+      },
+      created_at: now,
+    });
+
+    return updated;
+  }
+
+  getSession(id: string): SessionRecord | null {
+    const row = this.db
+      .prepare(
+        "SELECT id, agent_id, task_id, status, started_at, ended_at FROM sessions WHERE id = ?",
+      )
+      .get(id) as
+      | {
+          id: string;
+          agent_id: string;
+          task_id: string | null;
+          status: SessionStatus;
+          started_at: string;
+          ended_at: string | null;
+        }
+      | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      agentId: row.agent_id,
+      taskId: row.task_id,
+      status: row.status,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+    };
+  }
+
+  listSessions(filter?: {
+    agentId?: string | undefined;
+    taskId?: string | undefined;
+    status?: SessionStatus | undefined;
+  }): SessionRecord[] {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filter?.agentId) {
+      conditions.push("agent_id = ?");
+      params.push(filter.agentId);
+    }
+    if (filter?.taskId) {
+      conditions.push("task_id = ?");
+      params.push(filter.taskId);
+    }
+    if (filter?.status) {
+      conditions.push("status = ?");
+      params.push(filter.status);
+    }
+
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare(
+        `SELECT id, agent_id, task_id, status, started_at, ended_at FROM sessions ${whereClause} ORDER BY started_at DESC`,
+      )
+      .all(...params) as Array<{
+      id: string;
+      agent_id: string;
+      task_id: string | null;
+      status: SessionStatus;
+      started_at: string;
+      ended_at: string | null;
+    }>;
+
+    return rows.map((r) => ({
+      id: r.id,
+      agentId: r.agent_id,
+      taskId: r.task_id,
+      status: r.status,
+      startedAt: r.started_at,
+      endedAt: r.ended_at,
+    }));
+  }
+
+  createTask(input: CreateTaskInput, actor?: ActorContext): TaskRecord {
+    const validated = createTaskSchema.parse(input);
+    const id = validated.id?.trim() || `task-${randomUUID()}`;
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `INSERT INTO tasks (id, title, description, status, scope_json, version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+      )
+      .run(
+        id,
+        validated.title,
+        validated.description,
+        validated.status,
+        JSON.stringify(validated.scope),
+        now,
+        now,
+      );
+
+    if (actor) {
+      this.touchAgent(actor.actor);
+    }
+
+    const task: TaskRecord = {
+      id,
+      title: validated.title,
+      description: validated.description,
+      status: validated.status,
+      scope: validated.scope,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.writeAuditEvent({
+      event_type: "task.created",
+      actor: actor?.actor ?? "system",
+      entity_type: "task",
+      entity_id: id,
+      previous_version: null,
+      payload: {
+        title: task.title,
+        status: task.status,
+        scope: task.scope,
+      },
+      created_at: now,
+    });
+
+    return task;
+  }
+
+  getTask(id: string): TaskRecord | null {
+    const row = this.db
+      .prepare(
+        "SELECT id, title, description, status, scope_json, version, created_at, updated_at FROM tasks WHERE id = ?",
+      )
+      .get(id) as
+      | {
+          id: string;
+          title: string;
+          description: string;
+          status: TaskStatus;
+          scope_json: string;
+          version: number;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      status: row.status,
+      scope: JSON.parse(row.scope_json),
+      version: row.version,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  listTasks(status?: TaskStatus): TaskRecord[] {
+    const sql = status
+      ? "SELECT id, title, description, status, scope_json, version, created_at, updated_at FROM tasks WHERE status = ? ORDER BY updated_at DESC"
+      : "SELECT id, title, description, status, scope_json, version, created_at, updated_at FROM tasks ORDER BY updated_at DESC";
+    const params = status ? [status] : [];
+    const rows = this.db.prepare(sql).all(...params) as Array<{
+      id: string;
+      title: string;
+      description: string;
+      status: TaskStatus;
+      scope_json: string;
+      version: number;
+      created_at: string;
+      updated_at: string;
+    }>;
+
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      status: r.status,
+      scope: JSON.parse(r.scope_json),
+      version: r.version,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  createPolicy(input: CreatePolicyInput, actor?: ActorContext): PolicyRecord {
+    const validated = createPolicySchema.parse(input);
+    const id = validated.id?.trim() || `pol-${randomUUID()}`;
+    const now = new Date().toISOString();
+    const rules: PolicyRules =
+      validated.rules ??
+      (validated.policyJson ? JSON.parse(validated.policyJson) : {});
+    const policyJson = validated.policyJson ?? JSON.stringify(rules);
+
+    const upsertSql = `
+      INSERT INTO policies (id, name, description, policy_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        description = excluded.description,
+        policy_json = excluded.policy_json,
+        updated_at = excluded.updated_at;
+    `;
+
+    this.db
+      .prepare(upsertSql)
+      .run(id, validated.name, validated.description, policyJson, now, now);
+
+    const policy: PolicyRecord = {
+      id,
+      name: validated.name,
+      description: validated.description,
+      rules,
+      policyJson,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.writeAuditEvent({
+      event_type: "policy.created",
+      actor: actor?.actor ?? "system",
+      entity_type: "policy",
+      entity_id: id,
+      previous_version: null,
+      payload: {
+        name: policy.name,
+        rules: policy.rules,
+      },
+      created_at: now,
+    });
+
+    return policy;
+  }
+
+  getPolicy(id: string): PolicyRecord | null {
+    const row = this.db
+      .prepare(
+        "SELECT id, name, description, policy_json, created_at, updated_at FROM policies WHERE id = ?",
+      )
+      .get(id) as
+      | {
+          id: string;
+          name: string;
+          description: string;
+          policy_json: string;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    let rules: PolicyRules = {};
+    try {
+      rules = JSON.parse(row.policy_json);
+    } catch {
+      // fallback
+    }
+
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      rules,
+      policyJson: row.policy_json,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  listPolicies(): PolicyRecord[] {
+    const rows = this.db
+      .prepare(
+        "SELECT id, name, description, policy_json, created_at, updated_at FROM policies ORDER BY created_at ASC",
+      )
+      .all() as Array<{
+      id: string;
+      name: string;
+      description: string;
+      policy_json: string;
+      created_at: string;
+      updated_at: string;
+    }>;
+
+    return rows.map((r) => {
+      let rules: PolicyRules = {};
+      try {
+        rules = JSON.parse(r.policy_json);
+      } catch {
+        // fallback
+      }
+      return {
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        rules,
+        policyJson: r.policy_json,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      };
+    });
+  }
+
+  deletePolicy(id: string, actor?: ActorContext): boolean {
+    const existing = this.getPolicy(id);
+    if (!existing) {
+      return false;
+    }
+
+    this.db.prepare("DELETE FROM policies WHERE id = ?").run(id);
+
+    this.writeAuditEvent({
+      event_type: "policy.deleted",
+      actor: actor?.actor ?? "system",
+      entity_type: "policy",
+      entity_id: id,
+      previous_version: null,
+      payload: { name: existing.name },
+      created_at: new Date().toISOString(),
+    });
+
+    return true;
+  }
+
+  isScopeVisible(scope: ContextScope, policyId?: string): boolean {
+    let policy: PolicyRecord | null = null;
+    if (policyId) {
+      policy = this.getPolicy(policyId);
+    } else {
+      const policies = this.listPolicies();
+      if (policies.length > 0) {
+        policy = policies[0]!;
+      }
+    }
+    return isScopeVisibleByPolicy(scope, policy?.rules);
+  }
+
   create(input: CreateContextInput, actor: ActorContext): ContextItem {
+    const resolvedActor = this.resolveActor(actor);
     const id = input.id?.trim() || `ctx-${randomUUID()}`;
     const type = input.type;
     const scope: ContextScope = input.scope ?? "workspace";
@@ -189,9 +871,9 @@ export class ContextService {
 
     let status: ContextStatus;
     if (isDurableContextType(type)) {
-      if (actor.source === "agent") {
+      if (resolvedActor.source === "agent") {
         if (input.status === "approved") {
-          assertCanCreate(actor, { id, type, status: "approved" });
+          assertCanCreate(resolvedActor, { id, type, status: "approved" });
         }
         status = input.status === "draft" ? "draft" : "proposed";
       } else {
@@ -211,8 +893,8 @@ export class ContextService {
       workspaceId,
       title: input.title,
       content: input.content ?? "",
-      source: input.source ?? actor.source,
-      actor: input.actor ?? actor.actor,
+      source: input.source ?? resolvedActor.source,
+      actor: input.actor ?? resolvedActor.actor,
       status,
       importance: input.importance ?? "normal",
       visibility: input.visibility ?? [],
@@ -230,14 +912,15 @@ export class ContextService {
 
     this.writeAuditEvent({
       event_type: "context.created",
-      actor: actor.actor,
+      actor: resolvedActor.actor,
       entity_type: "context_item",
       entity_id: item.id,
       previous_version: null,
       payload: {
-        source: actor.source,
+        source: resolvedActor.source,
         profile:
-          actor.profile ?? (isActorElevated(actor) ? "elevated" : "default"),
+          resolvedActor.profile ??
+          (isActorElevated(resolvedActor) ? "elevated" : "default"),
         status: item.status,
         type: item.type,
         title: item.title,
@@ -248,7 +931,7 @@ export class ContextService {
 
     if (item.status === "approved" && item.supersedes.length > 0) {
       for (const supersededId of item.supersedes) {
-        this.executeSupersession(supersededId, item.id, actor);
+        this.executeSupersession(supersededId, item.id, resolvedActor);
       }
     }
 
@@ -264,6 +947,7 @@ export class ContextService {
   }
 
   approve(id: string, actor: ActorContext): ContextItem {
+    const resolvedActor = this.resolveActor(actor);
     const existing = this.getItem(id);
     if (!existing) {
       throw new Error(`Context item '${id}' not found.`);
@@ -274,7 +958,7 @@ export class ContextService {
     }
 
     validateTransition(existing.status, "approved", id);
-    assertCanApprove(actor, existing);
+    assertCanApprove(resolvedActor, existing);
 
     const prevVersion = existing.version;
     const nextVersion = existing.version + 1;
@@ -291,14 +975,15 @@ export class ContextService {
 
     this.writeAuditEvent({
       event_type: "context.approved",
-      actor: actor.actor,
+      actor: resolvedActor.actor,
       entity_type: "context_item",
       entity_id: id,
       previous_version: prevVersion,
       payload: {
-        source: actor.source,
+        source: resolvedActor.source,
         profile:
-          actor.profile ?? (isActorElevated(actor) ? "elevated" : "default"),
+          resolvedActor.profile ??
+          (isActorElevated(resolvedActor) ? "elevated" : "default"),
         from_status: existing.status,
         to_status: "approved",
       },
@@ -307,7 +992,7 @@ export class ContextService {
 
     if (updated.supersedes && updated.supersedes.length > 0) {
       for (const supersededId of updated.supersedes) {
-        this.executeSupersession(supersededId, updated.id, actor);
+        this.executeSupersession(supersededId, updated.id, resolvedActor);
       }
     }
 
@@ -318,6 +1003,7 @@ export class ContextService {
     params: { supersededId: string; replacingId: string },
     actor: ActorContext,
   ): { superseded: ContextItem; replacing: ContextItem } {
+    const resolvedActor = this.resolveActor(actor);
     const { supersededId, replacingId } = params;
 
     const superseded = this.getItem(supersededId);
@@ -339,7 +1025,7 @@ export class ContextService {
     const updatedSuperseded = this.executeSupersession(
       supersededId,
       replacingId,
-      actor,
+      resolvedActor,
     );
 
     let updatedReplacing = replacing;
@@ -356,6 +1042,7 @@ export class ContextService {
   }
 
   archive(id: string, actor: ActorContext): ContextItem {
+    const resolvedActor = this.resolveActor(actor);
     const existing = this.getItem(id);
     if (!existing) {
       throw new Error(`Context item '${id}' not found.`);
@@ -366,7 +1053,7 @@ export class ContextService {
     }
 
     validateTransition(existing.status, "archived", id);
-    assertCanArchive(actor, existing);
+    assertCanArchive(resolvedActor, existing);
 
     const prevVersion = existing.version;
     const nextVersion = existing.version + 1;
@@ -383,14 +1070,15 @@ export class ContextService {
 
     this.writeAuditEvent({
       event_type: "context.archived",
-      actor: actor.actor,
+      actor: resolvedActor.actor,
       entity_type: "context_item",
       entity_id: id,
       previous_version: prevVersion,
       payload: {
-        source: actor.source,
+        source: resolvedActor.source,
         profile:
-          actor.profile ?? (isActorElevated(actor) ? "elevated" : "default"),
+          resolvedActor.profile ??
+          (isActorElevated(resolvedActor) ? "elevated" : "default"),
         from_status: existing.status,
         to_status: "archived",
       },
@@ -406,6 +1094,7 @@ export class ContextService {
     actor: ActorContext,
     options?: { reason?: string | undefined; replacingId?: string | undefined },
   ): ContextItem {
+    const resolvedActor = this.resolveActor(actor);
     const existing = this.getItem(id);
     if (!existing) {
       throw new Error(`Context item '${id}' not found.`);
@@ -418,10 +1107,10 @@ export class ContextService {
     validateTransition(existing.status, toStatus, id);
 
     if (toStatus === "approved") {
-      return this.approve(id, actor);
+      return this.approve(id, resolvedActor);
     }
     if (toStatus === "archived") {
-      return this.archive(id, actor);
+      return this.archive(id, resolvedActor);
     }
     if (toStatus === "superseded") {
       if (!options?.replacingId) {
@@ -431,7 +1120,7 @@ export class ContextService {
       }
       return this.supersede(
         { supersededId: id, replacingId: options.replacingId },
-        actor,
+        resolvedActor,
       ).superseded;
     }
 
@@ -450,14 +1139,15 @@ export class ContextService {
 
     this.writeAuditEvent({
       event_type: `context.${toStatus}`,
-      actor: actor.actor,
+      actor: resolvedActor.actor,
       entity_type: "context_item",
       entity_id: id,
       previous_version: prevVersion,
       payload: {
-        source: actor.source,
+        source: resolvedActor.source,
         profile:
-          actor.profile ?? (isActorElevated(actor) ? "elevated" : "default"),
+          resolvedActor.profile ??
+          (isActorElevated(resolvedActor) ? "elevated" : "default"),
         from_status: existing.status,
         to_status: toStatus,
         reason: options?.reason,
@@ -1054,6 +1744,7 @@ export class ContextService {
     replacingId: string,
     actor: ActorContext,
   ): ContextItem {
+    const resolvedActor = this.resolveActor(actor);
     const superseded = this.getItem(supersededId);
     if (!superseded) {
       throw new Error(`Superseded context item '${supersededId}' not found.`);
@@ -1091,14 +1782,15 @@ export class ContextService {
 
     this.writeAuditEvent({
       event_type: "context.superseded",
-      actor: actor.actor,
+      actor: resolvedActor.actor,
       entity_type: "context_item",
       entity_id: supersededId,
       previous_version: prevVersion,
       payload: {
-        source: actor.source,
+        source: resolvedActor.source,
         profile:
-          actor.profile ?? (isActorElevated(actor) ? "elevated" : "default"),
+          resolvedActor.profile ??
+          (isActorElevated(resolvedActor) ? "elevated" : "default"),
         from_status: superseded.status,
         to_status: "superseded",
         superseded_by: replacingId,
@@ -1134,6 +1826,10 @@ export class ContextService {
         JSON.stringify(event.payload),
         event.created_at,
       );
+
+    if (event.actor) {
+      this.touchAgent(event.actor, event.created_at);
+    }
   }
 
   reconcile(options?: ReconcileOptions): ReconciliationResult {
