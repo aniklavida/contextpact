@@ -13,6 +13,11 @@ import {
   isOperationalContextType,
   type ActorContext,
 } from "../domain/lifecycle.js";
+import {
+  evidenceItemSchema,
+  handoffOutcomeSchema,
+  nextActionSchema,
+} from "../domain/handoff.js";
 import { readWorkspaceStatus } from "../workspace/layout.js";
 
 export interface McpServerOptions {
@@ -310,6 +315,170 @@ export function createServer(options?: McpServerOptions): McpServer {
             },
           ],
           structuredContent: { ...item },
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "handoff_create",
+    {
+      description:
+        "Record an evidence-bearing structured handoff across a context boundary.",
+      inputSchema: {
+        workspace: z.string().optional(),
+        id: z.string().optional(),
+        taskId: z.string().min(1),
+        agentId: z.string().optional(),
+        title: z.string().optional(),
+        outcome: handoffOutcomeSchema,
+        summary: z.string().min(1),
+        blockers: z.array(z.string()).optional(),
+        nextAction: nextActionSchema,
+        evidence: z.array(evidenceItemSchema).optional(),
+        releaseLease: z.boolean().optional(),
+        tags: z.array(z.string()).optional(),
+      },
+    },
+    async ({
+      workspace,
+      id,
+      taskId,
+      agentId,
+      title,
+      outcome,
+      summary,
+      blockers,
+      nextAction,
+      evidence,
+      releaseLease,
+      tags,
+    }) => {
+      try {
+        const service = getService(workspace);
+        const effectiveAgentId = agentId ?? serverActor.actor;
+        if (!service.getAgent(effectiveAgentId)) {
+          service.registerAgent({
+            id: effectiveAgentId,
+            displayName: effectiveAgentId,
+            clientKind: serverActor.source === "human" ? "human" : "mcp",
+            profile: serverActor.profile ?? "default",
+          });
+        }
+        const handoff = service.createHandoff(
+          {
+            id,
+            taskId,
+            agentId: effectiveAgentId,
+            title,
+            outcome,
+            summary,
+            blockers: blockers ?? [],
+            nextAction,
+            evidence: evidence ?? [],
+            releaseLease: releaseLease ?? true,
+            tags: tags ?? [],
+          },
+          serverActor,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Handoff '${handoff.id}' recorded with outcome '${handoff.outcome}'. Next action: ${handoff.nextAction}`,
+            },
+          ],
+          structuredContent: { ...handoff },
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "handoff_get",
+    {
+      description: "Retrieve an operational and narrative handoff by ID.",
+      inputSchema: {
+        workspace: z.string().optional(),
+        id: z.string().min(1),
+      },
+    },
+    async ({ workspace, id }) => {
+      const service = getService(workspace);
+      const handoff = service.getHandoff(id);
+      if (!handoff) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Handoff '${id}' not found.` }],
+        };
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify(handoff, null, 2) }],
+        structuredContent: { ...handoff },
+      };
+    },
+  );
+
+  server.registerTool(
+    "handoff_resume",
+    {
+      description:
+        "Resume work from a handoff: claims the task lease and acquires task and handoff context.",
+      inputSchema: {
+        workspace: z.string().optional(),
+        handoffId: z.string().min(1),
+        agentId: z.string().optional(),
+        ttlSeconds: z.number().int().positive().optional(),
+      },
+    },
+    async ({ workspace, handoffId, agentId, ttlSeconds }) => {
+      try {
+        const service = getService(workspace);
+        const effectiveAgentId = agentId ?? serverActor.actor;
+        if (!service.getAgent(effectiveAgentId)) {
+          service.registerAgent({
+            id: effectiveAgentId,
+            displayName: effectiveAgentId,
+            clientKind: serverActor.source === "human" ? "human" : "mcp",
+            profile: serverActor.profile ?? "default",
+          });
+        }
+        const result = service.resumeHandoff(
+          {
+            handoffId,
+            agentId: effectiveAgentId,
+            ttlSeconds,
+          },
+          serverActor,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Resumed from handoff '${handoffId}'. Claimed lease for task '${result.task.id}'. Next action: ${result.nextAction}`,
+            },
+          ],
+          structuredContent: { ...result },
         };
       } catch (error) {
         return {

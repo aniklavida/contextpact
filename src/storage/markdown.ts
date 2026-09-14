@@ -44,16 +44,19 @@ export function getKnowledgeFolderPath(
   workspaceRoot: string,
   type: ContextType,
 ): string {
+  const root = resolve(workspaceRoot);
+  const contextRoot =
+    basename(root) === ".contextpact" ? root : join(root, ".contextpact");
+
+  if (type === "handoff") {
+    return join(contextRoot, "handoffs");
+  }
+
   const folder = CONTEXT_TYPE_FOLDERS[type];
   if (!folder) {
     throw new Error(`Unsupported context type: ${type}`);
   }
-  const root = resolve(workspaceRoot);
-  const knowledgeDir =
-    basename(root) === ".contextpact"
-      ? join(root, "knowledge")
-      : join(root, ".contextpact", "knowledge");
-  return join(knowledgeDir, folder);
+  return join(contextRoot, "knowledge", folder);
 }
 
 export function getKnowledgeItemPath(
@@ -172,4 +175,58 @@ export function saveKnowledgeItem(
   const filePath = getKnowledgeItemPath(workspaceRoot, item);
   writeMarkdownKnowledgeItem(filePath, item, options);
   return filePath;
+}
+
+export interface ParsedHandoffNarrative {
+  summary: string;
+  blockers: string[];
+  nextAction: string;
+}
+
+export function parseHandoffNarrativeSections(
+  content: string,
+): ParsedHandoffNarrative {
+  const text = (content ?? "").trim();
+  const outcomeMatch = text.match(
+    /## Outcome\s*([\s\S]*?)(?=(?:## Blockers|## Next Action|$))/i,
+  );
+  const blockersMatch = text.match(
+    /## Blockers\s*([\s\S]*?)(?=(?:## Outcome|## Next Action|$))/i,
+  );
+  const nextActionMatch = text.match(
+    /## Next Action\s*([\s\S]*?)(?=(?:## Outcome|## Blockers|$))/i,
+  );
+
+  const summary = outcomeMatch ? outcomeMatch[1]!.trim() : text;
+  const nextAction = nextActionMatch ? nextActionMatch[1]!.trim() : "";
+  const blockersText = blockersMatch ? blockersMatch[1]!.trim() : "";
+
+  const blockers: string[] = [];
+  if (blockersText && !/^none\.?$/i.test(blockersText)) {
+    for (const line of blockersText.split("\n")) {
+      const trimmed = line.trim().replace(/^[-*]\s*/, "");
+      if (trimmed && !/^none\.?$/i.test(trimmed)) {
+        blockers.push(trimmed);
+      }
+    }
+  }
+
+  return {
+    summary,
+    blockers,
+    nextAction,
+  };
+}
+
+export function formatHandoffNarrativeBody(params: {
+  summary: string;
+  blockers?: string[];
+  nextAction: string;
+}): string {
+  const blockersList =
+    params.blockers && params.blockers.length > 0
+      ? params.blockers.map((b) => `- ${b}`).join("\n")
+      : "None.";
+
+  return `## Outcome\n${params.summary.trim()}\n\n## Blockers\n${blockersList}\n\n## Next Action\n${params.nextAction.trim()}`;
 }

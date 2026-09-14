@@ -221,11 +221,40 @@ const migration4: Migration = {
   },
 };
 
+const migration5: Migration = {
+  version: 5,
+  name: "005_add_handoffs_table",
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS handoffs (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL REFERENCES agents(id),
+        lease_version INTEGER,
+        outcome TEXT NOT NULL CHECK (outcome IN ('success', 'blocked', 'in_progress')),
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_handoffs_task ON handoffs(task_id);
+      CREATE INDEX IF NOT EXISTS idx_handoffs_agent ON handoffs(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_handoffs_outcome ON handoffs(outcome);
+    `);
+  },
+  down: (db) => {
+    db.exec("DROP INDEX IF EXISTS idx_handoffs_outcome;");
+    db.exec("DROP INDEX IF EXISTS idx_handoffs_agent;");
+    db.exec("DROP INDEX IF EXISTS idx_handoffs_task;");
+    db.exec("DROP TABLE IF EXISTS handoffs;");
+  },
+};
+
 export const migrations: readonly Migration[] = [
   migration1,
   migration2,
   migration3,
   migration4,
+  migration5,
 ];
 
 export function ensureMigrationsTable(db: Database.Database): void {

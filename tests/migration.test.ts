@@ -74,7 +74,7 @@ describe("Migration runner and schema evolution", () => {
     // Verify schema version is at latest
     expect(getCurrentMigrationVersion(migratedDb)).toBe(schemaVersion);
     const applied = getAppliedMigrations(migratedDb);
-    expect(applied.map((m) => m.version)).toEqual([1, 2, 3, 4]);
+    expect(applied.map((m) => m.version)).toEqual([1, 2, 3, 4, 5]);
 
     // 1. Assert workspace_id exists in context_items and was populated with no data loss
     const migratedColumns = migratedDb
@@ -160,7 +160,15 @@ describe("Migration runner and schema evolution", () => {
       .get("pol-1") as { id: string; name: string; policy_json: string };
     expect(policy.name).toBe("Global Policy");
 
-    // 4. Assert schema_migrations is STRICT
+    // 4. Assert handoffs table exists and is STRICT
+    const handoffsTableSql = migratedDb
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'handoffs'",
+      )
+      .get() as { sql: string };
+    expect(handoffsTableSql.sql.toUpperCase().includes("STRICT")).toBe(true);
+
+    // 5. Assert schema_migrations is STRICT
     const migrationsTableSql = migratedDb
       .prepare(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
@@ -177,20 +185,20 @@ describe("Migration runner and schema evolution", () => {
         .run("not-an-integer", 12345);
     }).toThrow();
 
-    // 5. Assert reversibility of migrations
+    // 6. Assert reversibility of migrations
     const rollbackResult = rollback(migratedDb, 1);
     expect(rollbackResult.currentVersion).toBe(1);
-    expect(rollbackResult.reverted).toEqual([4, 3, 2]);
+    expect(rollbackResult.reverted).toEqual([5, 4, 3, 2]);
 
     const revertedColumns = migratedDb
       .prepare("PRAGMA table_info(context_items)")
       .all() as Array<{ name: string }>;
     expect(revertedColumns.some((c) => c.name === "workspace_id")).toBe(false);
 
-    // Migrate back forward to version 4
-    const forwardResult = migrate(migratedDb, 4);
-    expect(forwardResult.currentVersion).toBe(4);
-    expect(forwardResult.applied).toEqual([2, 3, 4]);
+    // Migrate back forward to version 5
+    const forwardResult = migrate(migratedDb, 5);
+    expect(forwardResult.currentVersion).toBe(5);
+    expect(forwardResult.applied).toEqual([2, 3, 4, 5]);
 
     migratedDb.close();
   });

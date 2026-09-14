@@ -58,8 +58,23 @@ import {
   type ScopeConflict,
   type TakeoverLeaseInput,
 } from "../domain/task.js";
+import {
+  createHandoffSchema,
+  resumeHandoffSchema,
+  MissingEvidenceError,
+  HandoffNotFoundError,
+  type CreateHandoffInput,
+  type EvidenceItem,
+  type Handoff,
+  type HandoffOutcome,
+  type HandoffRecord,
+  type ResumeHandoffInput,
+  type ResumeHandoffResult,
+} from "../domain/handoff.js";
 import { openDatabase } from "../storage/database.js";
 import {
+  formatHandoffNarrativeBody,
+  parseHandoffNarrativeSections,
   readMarkdownKnowledgeItem,
   saveKnowledgeItem,
 } from "../storage/markdown.js";
@@ -2275,6 +2290,385 @@ export class ContextService {
     if (event.actor) {
       this.touchAgent(event.actor, event.created_at);
     }
+  }
+
+  /**
+   * Create an evidence-bearing structured handoff across a context boundary.
+   *
+   * Markdown owns the human-readable narrative. SQLite owns the operational
+   * record and atomic coordination link. Both share the same stable ID.
+   *
+   * Refuses immediately at the service layer if claiming success without evidence.
+   */
+  createHandoff(input: CreateHandoffInput, actor?: ActorContext): Handoff {
+    const validated = createHandoffSchema.parse(input);
+    const {
+      taskId,
+      agentId,
+      outcome,
+      summary,
+      blockers,
+      nextAction,
+      evidence,
+      releaseLease,
+      tags,
+    } = validated;
+
+    // EVIDENCE IS REQUIRED: Refuse success claim without evidence at the service layer
+    if (outcome === "success" && (!evidence || evidence.length === 0)) {
+      throw new MissingEvidenceError(
+        "Handoff asserting success refused: evidence is required. Completion without verification is not accepted as proven.",
+      );
+    }
+
+    const task = this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Cannot create handoff: task '${taskId}' not found.`);
+    }
+
+    const agent = this.getAgent(agentId);
+    if (!agent) {
+      throw new Error(
+        `Cannot create handoff: agent '${agentId}' not registered.`,
+      );
+    }
+
+    // Verify lease ownership if an active lease exists
+    const activeLease = this.getLease(taskId);
+    if (activeLease && activeLease.agentId !== agentId) {
+      throw new LeaseOwnershipError(taskId, agentId, activeLease.agentId);
+    }
+
+    const leaseVersion = activeLease ? activeLease.version : null;
+    const id = validated.id?.trim() || `handoff-${randomUUID()}`;
+    const nowIso = new Date().toISOString();
+    const title = validated.title?.trim() || `Handoff for ${task.title}`;
+
+    // Format human-readable narrative body for Markdown file
+    const narrativeBody = formatHandoffNarrativeBody({
+      summary,
+      blockers,
+      nextAction,
+    });
+
+    // Run SQLite operations inside a single atomic transaction
+    this.db
+      .transaction(() => {
+        // 1. Insert operational record into handoffs table
+        this.db
+          .prepare(
+            `INSERT INTO handoffs (id, task_id, agent_id, lease_version, outcome, evidence_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            id,
+            taskId,
+            agentId,
+            leaseVersion,
+            outcome,
+            JSON.stringify(evidence),
+            nowIso,
+            nowIso,
+          );
+
+        // 2. If releaseLease is true and an active lease was held, release it
+        if (releaseLease && activeLease) {
+          this.db
+            .prepare("DELETE FROM task_leases WHERE task_id = ?")
+            .run(taskId);
+          const finalTaskStatus = outcome === "blocked" ? "blocked" : "review";
+          this.db
+            .prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?")
+            .run(finalTaskStatus, nowIso, taskId);
+
+          const sql = `
+            INSERT INTO audit_events (
+              event_type, actor, entity_type, entity_id, previous_version, payload_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          `;
+          this.db.prepare(sql).run(
+            "task.lease_released",
+            agentId,
+            "task",
+            taskId,
+            activeLease.version,
+            JSON.stringify({
+              final_status: finalTaskStatus,
+              reason: "handoff",
+            }),
+            nowIso,
+          );
+        }
+
+        // 3. Write handoff.created audit event
+        const auditSql = `
+          INSERT INTO audit_events (
+            event_type, actor, entity_type, entity_id, previous_version, payload_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `;
+        this.db.prepare(auditSql).run(
+          "handoff.created",
+          agentId,
+          "handoff",
+          id,
+          null,
+          JSON.stringify({
+            task_id: taskId,
+            outcome,
+            next_action: nextAction,
+            evidence_count: evidence.length,
+          }),
+          nowIso,
+        );
+      })
+      .immediate();
+
+    // 4. Save Markdown narrative file and index in context_items & FTS
+    const contextItem: ContextItem = contextItemSchema.parse({
+      id,
+      type: "handoff",
+      scope: "task",
+      workspaceId: this.workspaceId,
+      title,
+      content: narrativeBody,
+      source: "agent",
+      actor: agentId,
+      status: "approved",
+      importance: "normal",
+      visibility: [],
+      tags,
+      version: 1,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      expiresAt: null,
+      supersedes: [],
+      taskId,
+      outcome,
+      nextAction,
+      blockers,
+    });
+
+    const documentPath = this.persistItem(contextItem);
+
+    if (actor) {
+      this.touchAgent(actor.actor);
+    } else {
+      this.touchAgent(agentId);
+    }
+
+    return {
+      id,
+      taskId,
+      agentId,
+      leaseVersion,
+      outcome,
+      summary,
+      blockers,
+      nextAction,
+      evidence,
+      title,
+      tags,
+      documentPath,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+  }
+
+  /**
+   * Retrieve a handoff by ID. Merges the SQLite operational record with
+   * the Markdown narrative file.
+   */
+  getHandoff(id: string): Handoff | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, task_id, agent_id, lease_version, outcome, evidence_json, created_at, updated_at
+         FROM handoffs WHERE id = ?`,
+      )
+      .get(id) as
+      | {
+          id: string;
+          task_id: string;
+          agent_id: string;
+          lease_version: number | null;
+          outcome: HandoffOutcome;
+          evidence_json: string;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    let evidence: EvidenceItem[] = [];
+    try {
+      evidence = JSON.parse(row.evidence_json);
+    } catch {
+      evidence = [];
+    }
+
+    // Markdown narrative owns what happened, blockers and next action
+    const item = this.getItem(id);
+    let summary = "";
+    let blockers: string[] = [];
+    let nextAction = "";
+    let title = `Handoff for ${row.task_id}`;
+    let tags: string[] = [];
+    let documentPath: string | undefined;
+
+    if (item) {
+      title = item.title;
+      tags = item.tags ?? [];
+      const parsedNarrative = parseHandoffNarrativeSections(item.content);
+      summary = parsedNarrative.summary;
+      blockers = parsedNarrative.blockers;
+      nextAction = parsedNarrative.nextAction;
+
+      const rawRecord = item as unknown as Record<string, unknown>;
+      if (!nextAction && typeof rawRecord.nextAction === "string") {
+        nextAction = rawRecord.nextAction;
+      }
+      if (blockers.length === 0 && Array.isArray(rawRecord.blockers)) {
+        blockers = rawRecord.blockers as string[];
+      }
+      const itemRow = this.db
+        .prepare("SELECT document_path FROM context_items WHERE id = ?")
+        .get(id) as { document_path: string | null } | undefined;
+      documentPath = itemRow?.document_path ?? undefined;
+    }
+
+    return {
+      id: row.id,
+      taskId: row.task_id,
+      agentId: row.agent_id,
+      leaseVersion: row.lease_version,
+      outcome: row.outcome,
+      summary,
+      blockers,
+      nextAction,
+      evidence,
+      title,
+      tags,
+      documentPath,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * List handoffs with optional filters.
+   */
+  listHandoffs(filter?: {
+    taskId?: string;
+    agentId?: string;
+    outcome?: HandoffOutcome;
+  }): Handoff[] {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filter?.taskId) {
+      conditions.push("task_id = ?");
+      params.push(filter.taskId);
+    }
+    if (filter?.agentId) {
+      conditions.push("agent_id = ?");
+      params.push(filter.agentId);
+    }
+    if (filter?.outcome) {
+      conditions.push("outcome = ?");
+      params.push(filter.outcome);
+    }
+
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM handoffs ${whereClause} ORDER BY created_at DESC`,
+      )
+      .all(...params) as Array<{ id: string }>;
+
+    const list: Handoff[] = [];
+    for (const r of rows) {
+      const h = this.getHandoff(r.id);
+      if (h) list.push(h);
+    }
+    return list;
+  }
+
+  /**
+   * Resume work from a handoff: reads the handoff, claims the task,
+   * records the resumption in the audit trail, and returns the context.
+   */
+  resumeHandoff(
+    input: ResumeHandoffInput,
+    actor?: ActorContext,
+  ): ResumeHandoffResult {
+    const validated = resumeHandoffSchema.parse(input);
+    const { handoffId, agentId, ttlSeconds, scope } = validated;
+
+    const handoff = this.getHandoff(handoffId);
+    if (!handoff) {
+      throw new HandoffNotFoundError(handoffId);
+    }
+
+    const task = this.getTask(handoff.taskId);
+    if (!task) {
+      throw new Error(
+        `Cannot resume handoff '${handoffId}': task '${handoff.taskId}' not found.`,
+      );
+    }
+
+    const agent = this.getAgent(agentId);
+    if (!agent) {
+      throw new Error(
+        `Cannot resume handoff: agent '${agentId}' not registered.`,
+      );
+    }
+
+    // Claim the lease on the handoff's task for the resuming agent
+    const lease = this.claimLease({
+      taskId: handoff.taskId,
+      agentId,
+      ttlSeconds,
+      scope: scope.length > 0 ? scope : task.scope,
+    });
+
+    const nowIso = new Date().toISOString();
+    const auditSql = `
+      INSERT INTO audit_events (
+        event_type, actor, entity_type, entity_id, previous_version, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    this.db.prepare(auditSql).run(
+      "handoff.resumed",
+      agentId,
+      "handoff",
+      handoffId,
+      null,
+      JSON.stringify({
+        task_id: handoff.taskId,
+        resuming_agent: agentId,
+        handed_off_by: handoff.agentId,
+        next_action: handoff.nextAction,
+      }),
+      nowIso,
+    );
+
+    if (actor) {
+      this.touchAgent(actor.actor);
+    } else {
+      this.touchAgent(agentId);
+    }
+
+    const updatedTask = this.getTask(handoff.taskId)!;
+
+    return {
+      handoff,
+      task: updatedTask,
+      lease,
+      nextAction: handoff.nextAction,
+    };
   }
 
   reconcile(options?: ReconcileOptions): ReconciliationResult {

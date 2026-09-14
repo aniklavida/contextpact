@@ -6,6 +6,7 @@ All notable changes will be documented here.
 
 ### Added
 
+- Evidence-bearing structured handoffs split between human-readable Markdown narratives and atomic SQLite operational records, requiring verified evidence for success claims, enforcing single next action discipline, and enabling multi-process task resumption.
 - Single-machine task leases with atomic SQLite claim transactions, conflict rejection, renewal, terminal release states and audited stale takeover.
 
 - Approved v1 product specification and architecture.
