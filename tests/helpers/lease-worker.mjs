@@ -79,6 +79,43 @@ async function main() {
         .prepare("UPDATE task_leases SET expires_at = ? WHERE task_id = ?")
         .run(pastExpiry, args.taskId);
       write({ ok: true });
+    } else if (command === "create-task") {
+      const task = service.createTask({
+        id: args.taskId ?? args.id,
+        title: args.title ?? "Worker Task",
+        description: args.description ?? "",
+        status: args.status ?? "planned",
+        scope: args.scope ?? [],
+      });
+      write({ ok: true, task });
+    } else if (command === "handoff") {
+      const handoff = service.createHandoff({
+        id: args.id,
+        taskId: args.taskId,
+        agentId: args.agentId,
+        title: args.title,
+        outcome: args.outcome,
+        summary: args.summary,
+        blockers: args.blockers ?? [],
+        nextAction: args.nextAction,
+        evidence: args.evidence ?? [],
+        releaseLease: args.releaseLease ?? true,
+      });
+      write({ ok: true, handoff });
+    } else if (command === "resume-handoff") {
+      const result = service.resumeHandoff({
+        handoffId: args.handoffId,
+        agentId: args.agentId,
+        ttlSeconds: args.ttlSeconds ?? 300,
+        scope: args.scope ?? [],
+      });
+      write({ ok: true, ...result });
+    } else if (command === "get-handoff") {
+      const handoff = service.getHandoff(args.handoffId ?? args.id);
+      write({ ok: true, handoff });
+    } else if (command === "get-task") {
+      const task = service.getTask(args.taskId ?? args.id);
+      write({ ok: true, task });
     } else {
       write({
         ok: false,

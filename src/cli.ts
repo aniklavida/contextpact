@@ -183,6 +183,47 @@ program
   });
 
 program
+  .command("handoff")
+  .description("Inspect an evidence-bearing structured handoff by ID.")
+  .argument("<id>", "Handoff ID")
+  .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+  .action((id: string, options: { dir: string }) => {
+    const service = new ContextService(options.dir);
+    try {
+      const handoff = service.getHandoff(id);
+      if (!handoff) {
+        process.stderr.write(`Handoff '${id}' not found.\n`);
+        process.exitCode = 1;
+        return;
+      }
+      process.stdout.write(`${JSON.stringify(handoff, null, 2)}\n`);
+    } finally {
+      service.close();
+    }
+  });
+
+program
+  .command("resume")
+  .description(
+    "Resume work from a structured handoff: claim the task and inspect context.",
+  )
+  .argument("<handoffId>", "Handoff ID to resume from")
+  .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+  .option("-a, --agent <agentId>", "Resuming agent identity", "agent-resuming")
+  .action((handoffId: string, options: { dir: string; agent: string }) => {
+    const service = new ContextService(options.dir);
+    try {
+      const result = service.resumeHandoff({
+        handoffId,
+        agentId: options.agent,
+      });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } finally {
+      service.close();
+    }
+  });
+
+program
   .command("mcp")
   .description("Run the experimental ContextPact MCP server over stdio.")
   .action(async () => {

@@ -291,4 +291,122 @@ describe("MCP Server approval gate and lifecycle tools", () => {
       packResult.structuredContent?.tokenBudget.usedTokens,
     ).toBeGreaterThan(0);
   });
+
+  it("creates, retrieves, and resumes handoffs via MCP tools", async () => {
+    const service = new ContextService(tempDir);
+    service.registerAgent({
+      id: "agent-mcp-default",
+      displayName: "Default MCP Agent",
+      clientKind: "mcp",
+      profile: "default",
+    });
+    service.registerAgent({
+      id: "agent-mcp-resuming",
+      displayName: "Resuming MCP Agent",
+      clientKind: "mcp",
+      profile: "default",
+    });
+    service.createTask({
+      id: "task-mcp-handoff",
+      title: "MCP Handoff Task",
+      status: "planned",
+      scope: ["src/"],
+    });
+    service.claimLease({
+      taskId: "task-mcp-handoff",
+      agentId: "agent-mcp-default",
+      ttlSeconds: 300,
+    });
+    service.close();
+
+    const server = createServer({ workspaceRoot: tempDir });
+    const createTool = getTool(server, "handoff_create");
+    const getToolFn = getTool(server, "handoff_get");
+    const resumeTool = getTool(server, "handoff_resume");
+
+    // 1. Create handoff without evidence when asserting success -> fails with error
+    const failedResult = (await createTool(
+      {
+        workspace: tempDir,
+        id: "ho-mcp-fail",
+        taskId: "task-mcp-handoff",
+        outcome: "success",
+        summary: "Claiming success with no evidence",
+        nextAction: "Step 2",
+        evidence: [],
+      },
+      {},
+    )) as { isError?: boolean; content: Array<{ text: string }> };
+
+    expect(failedResult.isError).toBe(true);
+    expect(failedResult.content[0]?.text.toLowerCase()).toContain("evidence");
+
+    // 2. Create handoff with valid evidence
+    const successResult = (await createTool(
+      {
+        workspace: tempDir,
+        id: "ho-mcp-ok",
+        taskId: "task-mcp-handoff",
+        agentId: "agent-mcp-default",
+        outcome: "success",
+        summary: "Phase 1 complete with verified test pass.",
+        nextAction: "Run performance test suite",
+        evidence: [
+          {
+            kind: "test",
+            description: "All integration tests pass",
+            command: "npm test",
+          },
+        ],
+      },
+      {},
+    )) as {
+      isError?: boolean;
+      structuredContent?: { id: string; outcome: string; nextAction: string };
+    };
+
+    expect(successResult.isError).toBeFalsy();
+    expect(successResult.structuredContent?.id).toBe("ho-mcp-ok");
+    expect(successResult.structuredContent?.outcome).toBe("success");
+
+    // 3. Retrieve handoff via handoff_get
+    const getResult = (await getToolFn(
+      {
+        workspace: tempDir,
+        id: "ho-mcp-ok",
+      },
+      {},
+    )) as { structuredContent?: { id: string; summary: string } };
+
+    expect(getResult.structuredContent?.id).toBe("ho-mcp-ok");
+    expect(getResult.structuredContent?.summary).toBe(
+      "Phase 1 complete with verified test pass.",
+    );
+
+    // 4. Resume handoff via handoff_resume
+    const resumeResult = (await resumeTool(
+      {
+        workspace: tempDir,
+        handoffId: "ho-mcp-ok",
+        agentId: "agent-mcp-resuming",
+      },
+      {},
+    )) as {
+      isError?: boolean;
+      structuredContent?: {
+        task: { id: string };
+        lease: { agentId: string };
+        nextAction: string;
+      };
+    };
+
+    expect(resumeResult.isError).toBeFalsy();
+    expect(resumeResult.structuredContent?.task.id).toBe("task-mcp-handoff");
+    expect(resumeResult.structuredContent?.lease.agentId).toBe(
+      "agent-mcp-resuming",
+    );
+    expect(resumeResult.structuredContent?.nextAction).toBe(
+      "Run performance test suite",
+    );
+  });
 });

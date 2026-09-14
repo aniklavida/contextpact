@@ -81,7 +81,9 @@ describe("Markdown knowledge items", () => {
       const savedPath = saveKnowledgeItem(root, item);
       expect(existsSync(savedPath)).toBe(true);
       expect(savedPath).toContain(
-        join(".contextpact", "knowledge", CONTEXT_TYPE_FOLDERS[type]),
+        type === "handoff"
+          ? join(".contextpact", "handoffs")
+          : join(".contextpact", "knowledge", CONTEXT_TYPE_FOLDERS[type]),
       );
 
       const loaded = readMarkdownKnowledgeItem(savedPath);

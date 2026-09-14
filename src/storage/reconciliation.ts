@@ -25,7 +25,8 @@ export interface ReconciliationConflict {
     | "stale_version"
     | "ambiguous_conflict"
     | "id_collision"
-    | "unparseable_file";
+    | "unparseable_file"
+    | "handoff_record_conflict";
   filePath: string;
   diskVersion?: number | undefined;
   dbVersion?: number | undefined;
@@ -142,6 +143,101 @@ export function reconcileWorkspace(
 
       seenIds.set(item.id, filePath);
       parsedFiles.push({ filePath, item, diskHash });
+    }
+
+    const hasHandoffsTable = !!db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'handoffs'",
+      )
+      .get();
+
+    if (hasHandoffsTable) {
+      const selectHandoffStmt = db.prepare(
+        "SELECT id, task_id, agent_id, lease_version, outcome, evidence_json FROM handoffs WHERE id = ?",
+      );
+
+      for (const { filePath, item } of parsedFiles) {
+        if (item.type === "handoff") {
+          const handoffRow = selectHandoffStmt.get(item.id) as
+            | {
+                id: string;
+                task_id: string;
+                agent_id: string;
+                lease_version: number | null;
+                outcome: string;
+                evidence_json: string;
+              }
+            | undefined;
+
+          if (!handoffRow) {
+            conflicts.push({
+              id: item.id,
+              type: "handoff_record_conflict",
+              filePath,
+              message: `Conflict: Handoff narrative in '${filePath}' has no corresponding operational record in SQLite table 'handoffs'.`,
+            });
+          } else {
+            const rawRecord = item as unknown as Record<string, unknown>;
+            const fileTaskId =
+              typeof rawRecord.taskId === "string"
+                ? rawRecord.taskId
+                : undefined;
+            if (fileTaskId && fileTaskId !== handoffRow.task_id) {
+              conflicts.push({
+                id: item.id,
+                type: "handoff_record_conflict",
+                filePath,
+                message: `Conflict: Handoff narrative in '${filePath}' references task '${fileTaskId}', but SQLite record is linked to task '${handoffRow.task_id}'.`,
+              });
+            }
+
+            const fileOutcome =
+              typeof rawRecord.outcome === "string"
+                ? rawRecord.outcome
+                : undefined;
+            if (fileOutcome && fileOutcome !== handoffRow.outcome) {
+              conflicts.push({
+                id: item.id,
+                type: "handoff_record_conflict",
+                filePath,
+                message: `Conflict: Handoff narrative in '${filePath}' claims outcome '${fileOutcome}', but SQLite record has outcome '${handoffRow.outcome}'.`,
+              });
+            }
+
+            let evidenceList: unknown[] = [];
+            try {
+              evidenceList = JSON.parse(handoffRow.evidence_json);
+            } catch {
+              // malformed json
+            }
+            if (
+              (handoffRow.outcome === "success" || fileOutcome === "success") &&
+              (!evidenceList || evidenceList.length === 0)
+            ) {
+              conflicts.push({
+                id: item.id,
+                type: "handoff_record_conflict",
+                filePath,
+                message: `Conflict: Handoff '${item.id}' in '${filePath}' asserts success without evidence in SQLite record.`,
+              });
+            }
+          }
+        }
+      }
+
+      const allHandoffs = db.prepare("SELECT id FROM handoffs").all() as Array<{
+        id: string;
+      }>;
+      for (const h of allHandoffs) {
+        if (!seenIds.has(h.id)) {
+          conflicts.push({
+            id: h.id,
+            type: "handoff_record_conflict",
+            filePath: join(paths.handoffs, `${h.id}.md`),
+            message: `Conflict: Handoff operational record '${h.id}' exists in SQLite, but its narrative Markdown file is missing from disk.`,
+          });
+        }
+      }
     }
 
     const indexed: string[] = [];

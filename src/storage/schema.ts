@@ -1,4 +1,4 @@
-export const schemaVersion = 4;
+export const schemaVersion = 5;
 
 export const schemaSql = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -77,6 +77,17 @@ CREATE TABLE IF NOT EXISTS context_supersedes (
   PRIMARY KEY (context_id, superseded_id)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS handoffs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL REFERENCES agents(id),
+  lease_version INTEGER,
+  outcome TEXT NOT NULL CHECK (outcome IN ('success', 'blocked', 'in_progress')),
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS audit_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_type TEXT NOT NULL,
@@ -124,6 +135,9 @@ CREATE INDEX IF NOT EXISTS idx_context_workspace_scope_status ON context_items(w
 CREATE INDEX IF NOT EXISTS idx_context_scope_status ON context_items(scope, status);
 CREATE INDEX IF NOT EXISTS idx_context_updated ON context_items(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_handoffs_task ON handoffs(task_id);
+CREATE INDEX IF NOT EXISTS idx_handoffs_agent ON handoffs(agent_id);
+CREATE INDEX IF NOT EXISTS idx_handoffs_outcome ON handoffs(outcome);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_events(entity_type, entity_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_policies_name ON policies(name);
 `;
