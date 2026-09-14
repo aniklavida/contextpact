@@ -199,6 +199,7 @@ export interface PackBuilderOptions {
   sessionId?: string | undefined;
   clientId?: string | undefined;
   allowGlobal?: boolean | undefined;
+  allowedScopes?: ContextScope[] | undefined;
   activePolicyName?: string | undefined;
   maxTokens?: number | undefined;
   includeSuperseded?: boolean | undefined;
@@ -223,6 +224,7 @@ export function buildContextPack(
     sessionId,
     clientId,
     allowGlobal = false,
+    allowedScopes,
     activePolicyName,
     maxTokens,
     includeSuperseded = false,
@@ -251,6 +253,17 @@ export function buildContextPack(
     }
 
     if (item.scope === "global" && !allowGlobal) {
+      omissions.push({
+        id: item.id,
+        title: item.title,
+        reason: "policy_restricted",
+        scope: item.scope,
+        type: item.type,
+      });
+      continue;
+    }
+
+    if (allowedScopes && !allowedScopes.includes(item.scope)) {
       omissions.push({
         id: item.id,
         title: item.title,

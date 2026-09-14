@@ -26,12 +26,122 @@ export function isOperationalContextType(type: ContextType): boolean {
   return (OPERATIONAL_CONTEXT_TYPES as readonly string[]).includes(type);
 }
 
-export type ActorProfile = "default" | "elevated" | "human" | "admin";
+export type ActorProfile = "default" | "elevated" | "human" | "admin" | string;
+
+export type Capability =
+  | "approve_durable"
+  | "create_approved"
+  | "archive_approved"
+  | "propose_durable"
+  | "write_operational"
+  | "read_context"
+  | "read_global"
+  | "manage_tasks"
+  | "manage_policies";
+
+export interface ProfileDefinition {
+  name: string;
+  description: string;
+  capabilities: readonly Capability[];
+}
+
+export const BUILTIN_PROFILES: Record<string, ProfileDefinition> = {
+  default: {
+    name: "default",
+    description:
+      "Default local agent process holding a task lease. Can propose durable knowledge and write operational notes, but cannot approve durable knowledge.",
+    capabilities: [
+      "propose_durable",
+      "write_operational",
+      "read_context",
+      "manage_tasks",
+    ],
+  },
+  read_only: {
+    name: "read_only",
+    description: "Read-only process. Can inspect and read context items.",
+    capabilities: ["read_context"],
+  },
+  elevated: {
+    name: "elevated",
+    description:
+      "Elevated agent reviewer process. Can approve durable proposals from other agents and archive approved knowledge.",
+    capabilities: [
+      "propose_durable",
+      "write_operational",
+      "read_context",
+      "manage_tasks",
+      "approve_durable",
+      "archive_approved",
+    ],
+  },
+  human: {
+    name: "human",
+    description: "Human operator. Holds full capabilities.",
+    capabilities: [
+      "propose_durable",
+      "write_operational",
+      "read_context",
+      "manage_tasks",
+      "approve_durable",
+      "create_approved",
+      "archive_approved",
+      "read_global",
+      "manage_policies",
+    ],
+  },
+  admin: {
+    name: "admin",
+    description: "Local administrator. Holds full capabilities.",
+    capabilities: [
+      "propose_durable",
+      "write_operational",
+      "read_context",
+      "manage_tasks",
+      "approve_durable",
+      "create_approved",
+      "archive_approved",
+      "read_global",
+      "manage_policies",
+    ],
+  },
+};
+
+export function getProfileCapabilities(
+  profileName: string,
+): readonly Capability[] {
+  const normalized = profileName.toLowerCase().trim();
+  if (normalized in BUILTIN_PROFILES) {
+    return BUILTIN_PROFILES[normalized]!.capabilities;
+  }
+  return BUILTIN_PROFILES["default"]!.capabilities;
+}
+
+export function hasCapability(
+  profileName: string | undefined,
+  capability: Capability,
+): boolean {
+  if (!profileName) {
+    return false;
+  }
+  return getProfileCapabilities(profileName).includes(capability);
+}
 
 export interface ActorContext {
   actor: string;
   source: "agent" | "human" | "cli" | "mcp" | string;
   profile?: ActorProfile | string | undefined;
+}
+
+export function actorHasCapability(
+  actor: ActorContext,
+  capability: Capability,
+): boolean {
+  if (actor.source === "human") {
+    return true;
+  }
+  const profile = actor.profile ?? "default";
+  return hasCapability(profile, capability);
 }
 
 export const DEFAULT_MCP_ACTOR: ActorContext = {
@@ -44,9 +154,7 @@ export function isActorElevated(actor: ActorContext): boolean {
   if (actor.source === "human") {
     return true;
   }
-  const profile =
-    actor.profile ?? (actor.source === "human" ? "human" : "default");
-  return profile === "elevated" || profile === "human" || profile === "admin";
+  return actorHasCapability(actor, "approve_durable");
 }
 
 export const LEGAL_TRANSITIONS: Record<
@@ -120,7 +228,11 @@ export function assertCanCreate(
   item: Pick<ContextItem, "type" | "status" | "id">,
 ): void {
   if (isDurableContextType(item.type)) {
-    if (actor.source === "agent" && item.status === "approved") {
+    if (
+      actor.source === "agent" &&
+      item.status === "approved" &&
+      !actorHasCapability(actor, "create_approved")
+    ) {
       throw new ApprovalGateError(
         actor,
         "create_approved",
@@ -136,7 +248,7 @@ export function assertCanApprove(
   item: Pick<ContextItem, "type" | "actor" | "id">,
 ): void {
   if (isDurableContextType(item.type)) {
-    if (!isActorElevated(actor)) {
+    if (!actorHasCapability(actor, "approve_durable")) {
       throw new ApprovalGateError(
         actor,
         "approve_durable",
@@ -159,7 +271,10 @@ export function assertCanArchive(
   actor: ActorContext,
   item: Pick<ContextItem, "type" | "status" | "id">,
 ): void {
-  if (item.status === "approved" && !isActorElevated(actor)) {
+  if (
+    item.status === "approved" &&
+    !actorHasCapability(actor, "archive_approved")
+  ) {
     throw new ApprovalGateError(
       actor,
       "archive_approved",
