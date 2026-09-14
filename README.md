@@ -24,6 +24,7 @@ Planned for v1.0 and not yet advertised as supported:
 
 - Guided Claude Code, Codex and Cursor connection.
 - Obsidian edit reconciliation workflow and packaging.
+- Import, export, backup and recovery.
 - Cross-platform clean-install and end-to-end proof.
 
 ## Intended experience
