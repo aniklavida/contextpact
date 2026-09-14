@@ -7,3 +7,7 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# SQLite sidecar files generated when a committed .db fixture is opened
+*.db-wal
+*.db-shm
