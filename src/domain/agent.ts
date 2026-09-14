@@ -85,7 +85,7 @@ export const createTaskSchema = z.object({
   scope: z.array(z.string().min(1)).default([]),
 });
 
-export type CreateTaskInput = z.infer<typeof createTaskSchema>;
+export type CreateTaskInput = z.input<typeof createTaskSchema>;
 
 export interface TaskRecord {
   id: string;

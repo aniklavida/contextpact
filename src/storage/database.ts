@@ -65,10 +65,11 @@ export function rebuildFtsIndex(database: Database.Database): void {
 }
 
 export function openDatabase(path: string): Database.Database {
-  const database = new Database(path);
+  const database = new Database(path, { timeout: 5000 });
   database.pragma("foreign_keys = ON");
   database.pragma("journal_mode = WAL");
   database.pragma("synchronous = NORMAL");
+  database.pragma("busy_timeout = 5000");
   migrate(database, schemaVersion);
   ensureFtsIndex(database);
   return database;

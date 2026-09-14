@@ -41,6 +41,23 @@ import {
   type PolicyRecord,
   type PolicyRules,
 } from "../domain/policy.js";
+import {
+  claimLeaseSchema,
+  renewLeaseSchema,
+  releaseLeaseSchema,
+  takeoverLeaseSchema,
+  LeaseConflictError,
+  LeaseNotStaleError,
+  LeaseOwnershipError,
+  NoActiveLeaseError,
+  TakeoverReasonRequiredError,
+  type ClaimLeaseInput,
+  type LeaseRecord,
+  type ReleaseLeaseInput,
+  type RenewLeaseInput,
+  type ScopeConflict,
+  type TakeoverLeaseInput,
+} from "../domain/task.js";
 import { openDatabase } from "../storage/database.js";
 import {
   readMarkdownKnowledgeItem,
@@ -1799,6 +1816,434 @@ export class ContextService {
     });
 
     return updatedSuperseded;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Task lease operations
+  //
+  // Leases are single-machine concurrency primitives. Two agents on the same
+  // machine that share one SQLite file are kept from colliding on the same
+  // task. This guarantee does not extend across devices or network boundaries.
+  // ---------------------------------------------------------------------------
+
+  private rowToLease(row: {
+    task_id: string;
+    agent_id: string;
+    acquired_at: string;
+    heartbeat_at: string;
+    expires_at: string;
+    version: number;
+  }): LeaseRecord {
+    return {
+      taskId: row.task_id,
+      agentId: row.agent_id,
+      acquiredAt: row.acquired_at,
+      heartbeatAt: row.heartbeat_at,
+      expiresAt: row.expires_at,
+      version: row.version,
+    };
+  }
+
+  getLease(taskId: string): LeaseRecord | null {
+    const row = this.db
+      .prepare(
+        "SELECT task_id, agent_id, acquired_at, heartbeat_at, expires_at, version FROM task_leases WHERE task_id = ?",
+      )
+      .get(taskId) as
+      | {
+          task_id: string;
+          agent_id: string;
+          acquired_at: string;
+          heartbeat_at: string;
+          expires_at: string;
+          version: number;
+        }
+      | undefined;
+
+    return row ? this.rowToLease(row) : null;
+  }
+
+  listLeases(): LeaseRecord[] {
+    const rows = this.db
+      .prepare(
+        "SELECT task_id, agent_id, acquired_at, heartbeat_at, expires_at, version FROM task_leases ORDER BY acquired_at DESC",
+      )
+      .all() as Array<{
+      task_id: string;
+      agent_id: string;
+      acquired_at: string;
+      heartbeat_at: string;
+      expires_at: string;
+      version: number;
+    }>;
+
+    return rows.map((r) => this.rowToLease(r));
+  }
+
+  private computeScopeConflict(
+    holderScopes: string[],
+    claimantScopes: string[],
+  ): ScopeConflict | null {
+    if (holderScopes.length === 0 || claimantScopes.length === 0) {
+      return null;
+    }
+    const holderSet = new Set(holderScopes);
+    const overlapping = claimantScopes.filter((s) => holderSet.has(s));
+    return {
+      overlapping,
+      holderScopes,
+      claimantScopes,
+    };
+  }
+
+  /**
+   * Claim a lease on a task atomically inside a single SQLite transaction.
+   *
+   * The lease model is explicitly single-machine, backed by SQLite on a single
+   * host filesystem. It does not provide distributed multi-machine consensus.
+   *
+   * A fresh conflicting claim fails immediately — it does not queue, retry or
+   * steal. To take over a stale (expired) lease use takeoverLease() instead,
+   * which requires an explicit reason and writes an audit trail.
+   */
+  claimLease(input: ClaimLeaseInput): LeaseRecord {
+    const validated = claimLeaseSchema.parse(input);
+    const { taskId, agentId, ttlSeconds, scope } = validated;
+
+    const task = this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Cannot claim lease: task '${taskId}' not found.`);
+    }
+
+    const agent = this.getAgent(agentId);
+    if (!agent) {
+      throw new Error(`Cannot claim lease: agent '${agentId}' not registered.`);
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
+
+    // Run inside a single SQLite transaction with BEGIN IMMEDIATE.
+    // SQLite's serialized writer lock ensures that concurrent processes
+    // cannot both observe "no lease" and both insert. One acquires the lock first,
+    // and the other will wait via busy_timeout and subsequently see the active lease.
+    const lease = this.db
+      .transaction((): LeaseRecord => {
+        const existing = this.db
+          .prepare(
+            "SELECT task_id, agent_id, acquired_at, heartbeat_at, expires_at, version FROM task_leases WHERE task_id = ?",
+          )
+          .get(taskId) as
+          | {
+              task_id: string;
+              agent_id: string;
+              acquired_at: string;
+              heartbeat_at: string;
+              expires_at: string;
+              version: number;
+            }
+          | undefined;
+
+        if (existing) {
+          // There is an existing lease. If it has not expired, refuse.
+          if (existing.expires_at > nowIso) {
+            const holderScopes = JSON.parse(
+              (
+                this.db
+                  .prepare("SELECT scope_json FROM tasks WHERE id = ?")
+                  .get(taskId) as { scope_json: string } | undefined
+              )?.scope_json ?? "[]",
+            ) as string[];
+            const conflict = this.computeScopeConflict(holderScopes, scope);
+            throw new LeaseConflictError(
+              taskId,
+              existing.agent_id,
+              existing.expires_at,
+              conflict,
+            );
+          }
+          // Lease is stale — treat this as a takeover path without reason.
+          // Reject: stale takeovers must go through takeoverLease().
+          throw new LeaseConflictError(
+            taskId,
+            existing.agent_id,
+            existing.expires_at,
+            null,
+          );
+        }
+
+        // Update task scope_json and set status to active.
+        this.db
+          .prepare(
+            "UPDATE tasks SET scope_json = ?, status = 'active', updated_at = ? WHERE id = ?",
+          )
+          .run(JSON.stringify(scope), nowIso, taskId);
+
+        this.db
+          .prepare(
+            `INSERT INTO task_leases (task_id, agent_id, acquired_at, heartbeat_at, expires_at, version)
+           VALUES (?, ?, ?, ?, ?, 1)`,
+          )
+          .run(taskId, agentId, nowIso, nowIso, expiresAt);
+
+        // Write audit inside the same transaction so the claim is one atomic transaction.
+        const sql = `
+        INSERT INTO audit_events (
+          event_type, actor, entity_type, entity_id, previous_version, payload_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `;
+        this.db.prepare(sql).run(
+          "task.lease_acquired",
+          agentId,
+          "task",
+          taskId,
+          null,
+          JSON.stringify({
+            expires_at: expiresAt,
+            ttl_seconds: ttlSeconds,
+            scope,
+          }),
+          nowIso,
+        );
+
+        return {
+          taskId,
+          agentId,
+          acquiredAt: nowIso,
+          heartbeatAt: nowIso,
+          expiresAt,
+          version: 1,
+        };
+      })
+      .immediate();
+
+    return lease;
+  }
+
+  /**
+   * Renew a lease the calling agent already holds. Extends the expiry by
+   * ttlSeconds from now and updates heartbeat_at.
+   */
+  renewLease(input: RenewLeaseInput): LeaseRecord {
+    const validated = renewLeaseSchema.parse(input);
+    const { taskId, agentId, ttlSeconds } = validated;
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
+
+    const existing = this.getLease(taskId);
+    if (!existing) {
+      throw new NoActiveLeaseError(taskId, "renew");
+    }
+    if (existing.agentId !== agentId) {
+      throw new LeaseOwnershipError(taskId, agentId, existing.agentId);
+    }
+
+    const nextVersion = existing.version + 1;
+
+    this.db
+      .transaction(() => {
+        this.db
+          .prepare(
+            "UPDATE task_leases SET heartbeat_at = ?, expires_at = ?, version = ? WHERE task_id = ?",
+          )
+          .run(nowIso, expiresAt, nextVersion, taskId);
+
+        const sql = `
+        INSERT INTO audit_events (
+          event_type, actor, entity_type, entity_id, previous_version, payload_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `;
+        this.db
+          .prepare(sql)
+          .run(
+            "task.lease_renewed",
+            agentId,
+            "task",
+            taskId,
+            existing.version,
+            JSON.stringify({ expires_at: expiresAt, ttl_seconds: ttlSeconds }),
+            nowIso,
+          );
+      })
+      .immediate();
+
+    return {
+      taskId,
+      agentId,
+      acquiredAt: existing.acquiredAt,
+      heartbeatAt: nowIso,
+      expiresAt,
+      version: nextVersion,
+    };
+  }
+
+  /**
+   * Release a lease the calling agent holds, transitioning the task to a
+   * terminal-ish status (review, done, blocked or planned).
+   */
+  releaseLease(input: ReleaseLeaseInput): TaskRecord {
+    const validated = releaseLeaseSchema.parse(input);
+    const { taskId, agentId, finalStatus } = validated;
+
+    const existing = this.getLease(taskId);
+    if (!existing) {
+      throw new NoActiveLeaseError(taskId, "release");
+    }
+    if (existing.agentId !== agentId) {
+      throw new LeaseOwnershipError(taskId, agentId, existing.agentId);
+    }
+
+    const nowIso = new Date().toISOString();
+
+    this.db
+      .transaction(() => {
+        this.db
+          .prepare("DELETE FROM task_leases WHERE task_id = ?")
+          .run(taskId);
+        this.db
+          .prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?")
+          .run(finalStatus, nowIso, taskId);
+
+        const sql = `
+        INSERT INTO audit_events (
+          event_type, actor, entity_type, entity_id, previous_version, payload_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `;
+        this.db
+          .prepare(sql)
+          .run(
+            "task.lease_released",
+            agentId,
+            "task",
+            taskId,
+            existing.version,
+            JSON.stringify({ final_status: finalStatus }),
+            nowIso,
+          );
+      })
+      .immediate();
+
+    return this.getTask(taskId)!;
+  }
+
+  /**
+   * Take over an expired lease from a different agent. A non-empty reason is
+   * mandatory. The audit row names both the displaced agent and the incoming
+   * agent so the event is always traceable.
+   *
+   * Refuses if the lease has not yet expired — use claimLease() for fresh
+   * tasks or wait until the current lease expires.
+   */
+  takeoverLease(input: TakeoverLeaseInput): LeaseRecord {
+    if (
+      !input ||
+      typeof input.reason !== "string" ||
+      input.reason.trim().length === 0
+    ) {
+      throw new TakeoverReasonRequiredError(input?.taskId ?? "unknown");
+    }
+
+    const validated = takeoverLeaseSchema.parse(input);
+    const { taskId, agentId, reason, ttlSeconds, scope } = validated;
+
+    const task = this.getTask(taskId);
+    if (!task) {
+      throw new Error(`Cannot take over lease: task '${taskId}' not found.`);
+    }
+
+    const agent = this.getAgent(agentId);
+    if (!agent) {
+      throw new Error(
+        `Cannot take over lease: agent '${agentId}' not registered.`,
+      );
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
+
+    const newLease = this.db
+      .transaction((): LeaseRecord => {
+        const existing = this.db
+          .prepare(
+            "SELECT task_id, agent_id, acquired_at, heartbeat_at, expires_at, version FROM task_leases WHERE task_id = ?",
+          )
+          .get(taskId) as
+          | {
+              task_id: string;
+              agent_id: string;
+              acquired_at: string;
+              heartbeat_at: string;
+              expires_at: string;
+              version: number;
+            }
+          | undefined;
+
+        if (!existing) {
+          throw new NoActiveLeaseError(taskId, "take over");
+        }
+
+        if (existing.expires_at > nowIso) {
+          throw new LeaseNotStaleError(taskId, existing.expires_at);
+        }
+
+        const prevAgent = existing.agent_id;
+
+        this.db
+          .prepare("DELETE FROM task_leases WHERE task_id = ?")
+          .run(taskId);
+
+        this.db
+          .prepare(
+            "UPDATE tasks SET scope_json = ?, status = 'active', updated_at = ? WHERE id = ?",
+          )
+          .run(JSON.stringify(scope), nowIso, taskId);
+
+        this.db
+          .prepare(
+            `INSERT INTO task_leases (task_id, agent_id, acquired_at, heartbeat_at, expires_at, version)
+           VALUES (?, ?, ?, ?, ?, 1)`,
+          )
+          .run(taskId, agentId, nowIso, nowIso, expiresAt);
+
+        // Write audit inside the transaction so it is always present.
+        const sql = `
+        INSERT INTO audit_events (
+          event_type, actor, entity_type, entity_id, previous_version, payload_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `;
+        this.db.prepare(sql).run(
+          "task.lease_takeover",
+          agentId,
+          "task",
+          taskId,
+          existing.version,
+          JSON.stringify({
+            displaced_agent: prevAgent,
+            incoming_agent: agentId,
+            reason: reason.trim(),
+            expires_at: expiresAt,
+            ttl_seconds: ttlSeconds,
+            scope,
+          }),
+          nowIso,
+        );
+
+        return {
+          taskId,
+          agentId,
+          acquiredAt: nowIso,
+          heartbeatAt: nowIso,
+          expiresAt,
+          version: 1,
+        };
+      })
+      .immediate();
+
+    return newLease;
   }
 
   private writeAuditEvent(event: {
