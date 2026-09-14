@@ -2,6 +2,8 @@
 
 import { Command } from "commander";
 
+import { ContextService } from "./core/context-service.js";
+import type { ContextScope } from "./domain/context.js";
 import { runStdioServer } from "./mcp/server.js";
 import {
   initializeWorkspace,
@@ -33,6 +35,45 @@ program
     process.stdout.write(
       `${JSON.stringify(readWorkspaceStatus(directory), null, 2)}\n`,
     );
+  });
+
+program
+  .command("approve")
+  .description("Approve a proposed context item through the approval gate.")
+  .argument("<id>", "Context item ID to approve")
+  .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+  .option("-a, --actor <actor>", "Approver actor identity", "human-user")
+  .action((id: string, options: { dir: string; actor: string }) => {
+    const service = new ContextService(options.dir);
+    try {
+      const item = service.approve(id, {
+        actor: options.actor,
+        source: "human",
+        profile: "human",
+      });
+      process.stdout.write(`${JSON.stringify(item, null, 2)}\n`);
+    } finally {
+      service.close();
+    }
+  });
+
+program
+  .command("pack")
+  .description("Build and inspect the default approved context pack.")
+  .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+  .option(
+    "-s, --scope <scope>",
+    "Context scope (global, workspace, task, session)",
+  )
+  .action((options: { dir: string; scope?: string }) => {
+    const service = new ContextService(options.dir);
+    try {
+      const scope = options.scope ? (options.scope as ContextScope) : undefined;
+      const pack = service.buildDefaultPack(scope);
+      process.stdout.write(`${JSON.stringify(pack, null, 2)}\n`);
+    } finally {
+      service.close();
+    }
   });
 
 program
