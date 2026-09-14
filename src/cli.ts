@@ -77,6 +77,36 @@ program
   });
 
 program
+  .command("reindex")
+  .description(
+    "Rebuild SQLite search index and reconcile Markdown knowledge items.",
+  )
+  .argument("[directory]", "Workspace directory", process.cwd())
+  .action((directory: string) => {
+    const service = new ContextService(directory);
+    try {
+      const result = service.reindex();
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } finally {
+      service.close();
+    }
+  });
+
+program
+  .command("reconcile")
+  .description("Reconcile Markdown knowledge items with SQLite index.")
+  .argument("[directory]", "Workspace directory", process.cwd())
+  .action((directory: string) => {
+    const service = new ContextService(directory);
+    try {
+      const result = service.reconcile();
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } finally {
+      service.close();
+    }
+  });
+
+program
   .command("mcp")
   .description("Run the experimental ContextPact MCP server over stdio.")
   .action(async () => {

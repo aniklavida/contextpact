@@ -1,10 +1,10 @@
-export const schemaVersion = 1;
+export const schemaVersion = 4;
 
 export const schemaSql = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL
-);
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS workspace (
   id TEXT PRIMARY KEY,
@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS context_items (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
   scope TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
   title TEXT NOT NULL,
   content TEXT NOT NULL,
   source TEXT NOT NULL,
@@ -87,6 +88,15 @@ CREATE TABLE IF NOT EXISTS audit_events (
   created_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS policies (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  policy_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
 CREATE VIRTUAL TABLE IF NOT EXISTS context_fts USING fts5(
   context_id UNINDEXED,
   title,
@@ -94,8 +104,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS context_fts USING fts5(
   tags
 );
 
+CREATE INDEX IF NOT EXISTS idx_context_workspace_scope_status ON context_items(workspace_id, scope, status);
 CREATE INDEX IF NOT EXISTS idx_context_scope_status ON context_items(scope, status);
 CREATE INDEX IF NOT EXISTS idx_context_updated ON context_items(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_events(entity_type, entity_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_policies_name ON policies(name);
 `;

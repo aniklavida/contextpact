@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import type Database from "better-sqlite3";
 
@@ -26,6 +26,17 @@ import {
   readMarkdownKnowledgeItem,
   saveKnowledgeItem,
 } from "../storage/markdown.js";
+import {
+  computeDocumentHash,
+  reconcileWorkspace,
+  recoverDatabase,
+  reindexWorkspace,
+  type ReconcileOptions,
+  type ReconciliationResult,
+  type RecoveryResult,
+  type ReindexOptions,
+  type ReindexResult,
+} from "../storage/reconciliation.js";
 import { readWorkspaceStatus, workspacePaths } from "../workspace/layout.js";
 import { buildContextPack, type ContextPack } from "./pack-builder.js";
 
@@ -56,6 +67,7 @@ export interface CreateContextInput extends BaseContextInput {
 export interface ProposeContextInput extends BaseContextInput {}
 
 export interface QueryContextFilter {
+  workspaceId?: string | undefined;
   status?: ContextStatus | undefined;
   type?: ContextType | undefined;
   scope?: ContextScope | undefined;
@@ -405,20 +417,10 @@ export class ContextService {
   }
 
   getItem(id: string): ContextItem | null {
-    const row = this.db
-      .prepare("SELECT id, type, document_path FROM context_items WHERE id = ?")
-      .get(id) as
-      | { id: string; type: ContextType; document_path: string | null }
-      | undefined;
-
-    if (row && row.document_path && existsSync(row.document_path)) {
-      return readMarkdownKnowledgeItem(row.document_path);
-    }
-
     const fullRow = this.db
       .prepare(
-        `SELECT id, type, scope, title, content, source, actor, status,
-                importance, visibility_json, tags_json, version,
+        `SELECT id, type, scope, workspace_id, title, content, source, actor, status,
+                importance, visibility_json, tags_json, document_path, document_hash, version,
                 created_at, updated_at, expires_at
          FROM context_items WHERE id = ?`,
       )
@@ -427,6 +429,7 @@ export class ContextService {
           id: string;
           type: ContextType;
           scope: ContextScope;
+          workspace_id: string;
           title: string;
           content: string;
           source: string;
@@ -435,6 +438,8 @@ export class ContextService {
           importance: Importance;
           visibility_json: string;
           tags_json: string;
+          document_path: string | null;
+          document_hash: string | null;
           version: number;
           created_at: string;
           updated_at: string;
@@ -443,6 +448,18 @@ export class ContextService {
       | undefined;
 
     if (fullRow) {
+      if (fullRow.document_path && existsSync(fullRow.document_path)) {
+        try {
+          const diskItem = readMarkdownKnowledgeItem(fullRow.document_path);
+          // If disk file is at least as fresh as DB, use it to preserve human frontmatter annotations
+          if (diskItem.version >= fullRow.version) {
+            return diskItem;
+          }
+        } catch {
+          // If reading or parsing disk fails, fall back to SQLite row
+        }
+      }
+
       const supersedesRows = this.db
         .prepare(
           "SELECT superseded_id FROM context_supersedes WHERE context_id = ?",
@@ -453,7 +470,7 @@ export class ContextService {
         id: fullRow.id,
         type: fullRow.type,
         scope: fullRow.scope,
-        workspaceId: this.workspaceId,
+        workspaceId: fullRow.workspace_id || this.workspaceId,
         title: fullRow.title,
         content: fullRow.content,
         source: fullRow.source,
@@ -476,6 +493,11 @@ export class ContextService {
   queryItems(filter?: QueryContextFilter): ContextItem[] {
     const conditions: string[] = [];
     const params: unknown[] = [];
+
+    if (filter?.workspaceId) {
+      conditions.push("workspace_id = ?");
+      params.push(filter.workspaceId);
+    }
 
     if (filter?.status) {
       conditions.push("status = ?");
@@ -592,16 +614,19 @@ export class ContextService {
 
   private persistItem(item: ContextItem): string {
     const documentPath = saveKnowledgeItem(this.workspaceRoot, item);
+    const rawContent = readFileSync(documentPath, "utf8");
+    const documentHash = computeDocumentHash(rawContent);
 
     const upsertSql = `
       INSERT INTO context_items (
-        id, type, scope, title, content, source, actor, status,
+        id, type, scope, workspace_id, title, content, source, actor, status,
         importance, visibility_json, tags_json, document_path, document_hash,
         version, created_at, updated_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         type = excluded.type,
         scope = excluded.scope,
+        workspace_id = excluded.workspace_id,
         title = excluded.title,
         content = excluded.content,
         source = excluded.source,
@@ -624,6 +649,7 @@ export class ContextService {
         item.id,
         item.type,
         item.scope,
+        item.workspaceId,
         item.title,
         item.content,
         item.source,
@@ -633,7 +659,7 @@ export class ContextService {
         JSON.stringify(item.visibility ?? []),
         JSON.stringify(item.tags ?? []),
         documentPath,
-        null,
+        documentHash,
         item.version,
         item.createdAt,
         item.updatedAt,
@@ -741,5 +767,17 @@ export class ContextService {
         JSON.stringify(event.payload),
         event.created_at,
       );
+  }
+
+  reconcile(options?: ReconcileOptions): ReconciliationResult {
+    return reconcileWorkspace(this.workspaceRoot, this.db, options);
+  }
+
+  reindex(options?: ReindexOptions): ReindexResult {
+    return reindexWorkspace(this.workspaceRoot, this.db, options);
+  }
+
+  static recover(workspaceRoot: string): RecoveryResult {
+    return recoverDatabase(workspaceRoot);
   }
 }
