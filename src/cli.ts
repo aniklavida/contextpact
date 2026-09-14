@@ -3,6 +3,7 @@
 import { Command } from "commander";
 
 import { ContextService } from "./core/context-service.js";
+import { renderContextPackMarkdown } from "./core/pack-builder.js";
 import type { ContextScope } from "./domain/context.js";
 import { runStdioServer } from "./mcp/server.js";
 import {
@@ -58,23 +59,98 @@ program
   });
 
 program
-  .command("pack")
-  .description("Build and inspect the default approved context pack.")
+  .command("search")
+  .description(
+    "Search workspace context items using SQLite FTS5 full-text search.",
+  )
+  .argument("<query>", "Search query string")
   .option("-d, --dir <directory>", "Workspace directory", process.cwd())
   .option(
     "-s, --scope <scope>",
     "Context scope (global, workspace, task, session)",
   )
-  .action((options: { dir: string; scope?: string }) => {
-    const service = new ContextService(options.dir);
-    try {
-      const scope = options.scope ? (options.scope as ContextScope) : undefined;
-      const pack = service.buildDefaultPack(scope);
-      process.stdout.write(`${JSON.stringify(pack, null, 2)}\n`);
-    } finally {
-      service.close();
-    }
-  });
+  .option("--allow-global", "Allow searching global context")
+  .option("-l, --limit <number>", "Maximum number of results", "10")
+  .action(
+    (
+      query: string,
+      options: {
+        dir: string;
+        scope?: string;
+        allowGlobal?: boolean;
+        limit?: string;
+      },
+    ) => {
+      const service = new ContextService(options.dir);
+      try {
+        const results = service.search(query, {
+          scope: options.scope ? (options.scope as ContextScope) : undefined,
+          allowGlobal: options.allowGlobal,
+          limit: options.limit ? parseInt(options.limit, 10) : undefined,
+        });
+        process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
+      } finally {
+        service.close();
+      }
+    },
+  );
+
+program
+  .command("pack")
+  .description(
+    "Build and inspect the deterministic token-budgeted context pack.",
+  )
+  .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+  .option("-q, --query <query>", "Search query filter")
+  .option(
+    "-s, --scope <scope>",
+    "Context scope (global, workspace, task, session)",
+  )
+  .option("-t, --task <taskId>", "Active task ID")
+  .option("-S, --session <sessionId>", "Active session ID")
+  .option("-c, --client <clientId>", "Client identity")
+  .option("-b, --budget <tokens>", "Maximum token budget")
+  .option("--allow-global", "Allow global context if permitted by policy")
+  .option("-f, --format <format>", "Output format (json, markdown)", "json")
+  .action(
+    (options: {
+      dir: string;
+      query?: string;
+      scope?: string;
+      task?: string;
+      session?: string;
+      client?: string;
+      budget?: string;
+      allowGlobal?: boolean;
+      format?: string;
+    }) => {
+      const service = new ContextService(options.dir);
+      try {
+        const scope = options.scope
+          ? (options.scope as ContextScope)
+          : undefined;
+        const maxTokens = options.budget
+          ? parseInt(options.budget, 10)
+          : undefined;
+        const pack = service.buildPack({
+          query: options.query,
+          scope,
+          taskId: options.task,
+          sessionId: options.session,
+          clientId: options.client,
+          maxTokens,
+          allowGlobal: options.allowGlobal,
+        });
+        if (options.format === "markdown") {
+          process.stdout.write(`${renderContextPackMarkdown(pack)}\n`);
+        } else {
+          process.stdout.write(`${JSON.stringify(pack, null, 2)}\n`);
+        }
+      } finally {
+        service.close();
+      }
+    },
+  );
 
 program
   .command("reindex")
