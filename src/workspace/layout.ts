@@ -103,12 +103,21 @@ export function readWorkspaceStatus(
       databaseExists: false,
     };
   }
-  const raw = YAML.parse(readFileSync(paths.manifest, "utf8"));
-  const manifest = workspaceManifestSchema.parse(raw);
-  return {
-    initialized: true,
-    root: paths.root,
-    manifest,
-    databaseExists: existsSync(paths.database),
-  };
+  try {
+    const raw = YAML.parse(readFileSync(paths.manifest, "utf8"));
+    const manifest = workspaceManifestSchema.parse(raw);
+    return {
+      initialized: true,
+      root: paths.root,
+      manifest,
+      databaseExists: existsSync(paths.database),
+    };
+  } catch {
+    return {
+      initialized: false,
+      root: paths.root,
+      manifest: null,
+      databaseExists: existsSync(paths.database),
+    };
+  }
 }
