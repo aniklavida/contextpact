@@ -324,4 +324,53 @@ describe("CLI surface commands over one core", () => {
     expect(resumed.lease.agentId).toBe("agent-incoming");
     expect(resumed.nextAction).toBe("Execute phase 2 verification");
   });
+
+  it("exports and imports workspace via CLI commands", async () => {
+    // Propose an approved item
+    await runCli([
+      "propose",
+      "--dir",
+      tempDir,
+      "--type",
+      "rule",
+      "--title",
+      "CLI Export Rule",
+      "--content",
+      "Exportable via CLI",
+    ]);
+
+    const exportFilePath = join(tempDir, "cli-export.json");
+    const exportResult = await runCli([
+      "export",
+      exportFilePath,
+      "--dir",
+      tempDir,
+    ]);
+    expect(exportResult.exitCode).toBeUndefined();
+    expect(existsSync(exportFilePath)).toBe(true);
+
+    const exportOutput = JSON.parse(exportResult.stdout);
+    expect(exportOutput.contextItemCount).toBeGreaterThanOrEqual(1);
+
+    // Import into a target workspace
+    const targetDir = mkdtempSync(
+      join(tmpdir(), "contextpact-cli-import-target-"),
+    );
+    try {
+      initializeWorkspace(targetDir, "Import Target");
+      const importResult = await runCli([
+        "import",
+        exportFilePath,
+        "--dir",
+        targetDir,
+        "--on-collision",
+        "replace",
+      ]);
+      expect(importResult.exitCode).toBeUndefined();
+      const importOutput = JSON.parse(importResult.stdout);
+      expect(importOutput.imported.contextItems).toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(targetDir, { recursive: true, force: true });
+    }
+  });
 });

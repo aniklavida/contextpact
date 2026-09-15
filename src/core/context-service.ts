@@ -102,6 +102,17 @@ import {
   type ContextPackOmission,
   type PackBuilderOptions,
 } from "./pack-builder.js";
+import {
+  type ExportOptions,
+  type ExportResult,
+  type ImportOptions,
+  type ImportResult,
+  type WorkspaceExportData,
+} from "../domain/maintenance.js";
+import {
+  exportWorkspace as coreExportWorkspace,
+  importWorkspace as coreImportWorkspace,
+} from "./maintenance.js";
 
 export interface BaseContextInput {
   id?: string | undefined;
@@ -1707,7 +1718,35 @@ export class ContextService {
       entity_type: r.entity_type,
       entity_id: r.entity_id,
       previous_version: r.previous_version,
-      payload: JSON.parse(r.payload_json),
+      payload: JSON.parse(r.payload_json || "{}"),
+      created_at: r.created_at,
+    }));
+  }
+
+  getAllAuditEvents(): AuditEventRecord[] {
+    const rows = this.db
+      .prepare(
+        "SELECT id, event_type, actor, entity_type, entity_id, previous_version, payload_json, created_at FROM audit_events ORDER BY id ASC",
+      )
+      .all() as Array<{
+      id: number;
+      event_type: string;
+      actor: string;
+      entity_type: string;
+      entity_id: string;
+      previous_version: number | null;
+      payload_json: string;
+      created_at: string;
+    }>;
+
+    return rows.map((r) => ({
+      id: r.id,
+      event_type: r.event_type,
+      actor: r.actor,
+      entity_type: r.entity_type,
+      entity_id: r.entity_id,
+      previous_version: r.previous_version,
+      payload: JSON.parse(r.payload_json || "{}"),
       created_at: r.created_at,
     }));
   }
@@ -2770,6 +2809,39 @@ export class ContextService {
 
   reindex(options?: ReindexOptions): ReindexResult {
     return reindexWorkspace(this.workspaceRoot, this.db, options);
+  }
+
+  exportWorkspace(options?: ExportOptions): ExportResult {
+    return coreExportWorkspace(this.workspaceRoot, this.db, options);
+  }
+
+  importWorkspace(
+    source: string | WorkspaceExportData,
+    options?: ImportOptions,
+  ): ImportResult {
+    return coreImportWorkspace(this.workspaceRoot, this.db, source, options);
+  }
+
+  static export(workspaceRoot: string, options?: ExportOptions): ExportResult {
+    const service = new ContextService(workspaceRoot);
+    try {
+      return service.exportWorkspace(options);
+    } finally {
+      service.close();
+    }
+  }
+
+  static import(
+    workspaceRoot: string,
+    source: string | WorkspaceExportData,
+    options?: ImportOptions,
+  ): ImportResult {
+    const service = new ContextService(workspaceRoot);
+    try {
+      return service.importWorkspace(source, options);
+    } finally {
+      service.close();
+    }
   }
 
   static recover(workspaceRoot: string): RecoveryResult {

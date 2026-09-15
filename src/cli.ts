@@ -724,6 +724,64 @@ export function createProgram(): Command {
     });
 
   program
+    .command("export")
+    .description(
+      "Export workspace including Markdown vault and SQLite operational state.",
+    )
+    .argument("[outputPath]", "Export destination file path")
+    .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+    .option("--stdout", "Print raw export JSON to stdout", false)
+    .action(
+      (
+        outputPath: string | undefined,
+        options: { dir: string; stdout?: boolean },
+      ) => {
+        const service = new ContextService(options.dir);
+        try {
+          const result = service.exportWorkspace({ outputPath });
+          if (options.stdout) {
+            process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+          } else {
+            process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+          }
+        } finally {
+          service.close();
+        }
+      },
+    );
+
+  program
+    .command("import")
+    .description(
+      "Import workspace data with deterministic ID collision policies.",
+    )
+    .argument("<sourceFile>", "Path to export JSON file to import")
+    .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+    .option(
+      "--on-collision <policy>",
+      "ID collision policy (skip, replace, error)",
+      "skip",
+    )
+    .action(
+      (sourceFile: string, options: { dir: string; onCollision: string }) => {
+        const service = new ContextService(options.dir);
+        try {
+          const result = service.importWorkspace(sourceFile, {
+            onCollision: options.onCollision as "skip" | "replace" | "error",
+          });
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        } catch (err) {
+          process.stderr.write(
+            `Import failed: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          process.exitCode = 1;
+        } finally {
+          service.close();
+        }
+      },
+    );
+
+  program
     .command("connect")
     .description(
       "Connect ContextPact MCP server to host AI clients (claude, codex, cursor) or print generic MCP config.",
