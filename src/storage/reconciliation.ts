@@ -492,6 +492,29 @@ export function recoverDatabase(workspaceRoot: string): RecoveryResult {
   const reindexResult = reindexWorkspace(workspaceRoot, db, {
     cleanDeleted: true,
   });
+
+  db.prepare(
+    `
+    INSERT INTO audit_events (
+      event_type, actor, entity_type, entity_id, payload_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `,
+  ).run(
+    "database_rebuilt",
+    "system",
+    "workspace",
+    status.manifest?.id ?? "workspace",
+    JSON.stringify({
+      rebuiltAt: new Date().toISOString(),
+      rebuiltFrom: "markdown",
+      leasesRestored: false,
+      auditEventsRestored: false,
+      warning:
+        "Database rebuilt from Markdown. Historical task leases and audit events were not restored and cannot be rebuilt.",
+    }),
+    new Date().toISOString(),
+  );
+
   db.close();
 
   return {

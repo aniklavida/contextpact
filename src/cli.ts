@@ -699,13 +699,90 @@ export function createProgram(): Command {
       "Rebuild SQLite search index and reconcile Markdown knowledge items.",
     )
     .argument("[directory]", "Workspace directory", process.cwd())
-    .action((directory: string) => {
+    .option(
+      "--clean-deleted",
+      "Remove database rows for files deleted from disk",
+      true,
+    )
+    .option(
+      "--no-clean-deleted",
+      "Preserve database rows for files deleted from disk",
+    )
+    .action((directory: string, options: { cleanDeleted?: boolean }) => {
       const service = new ContextService(directory);
       try {
-        const result = service.reindex();
+        const result = service.reindex({
+          cleanDeleted: options.cleanDeleted !== false,
+        });
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       } finally {
         service.close();
+      }
+    });
+
+  program
+    .command("backup")
+    .description(
+      "Create a point-in-time dual-store snapshot bundle covering Markdown vault and SQLite database.",
+    )
+    .argument("[outputPath]", "Backup destination path")
+    .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+    .action((outputPath: string | undefined, options: { dir: string }) => {
+      const service = new ContextService(options.dir);
+      try {
+        const result = service.backupWorkspace({ outputPath });
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } catch (err) {
+        process.stderr.write(
+          `Backup failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exitCode = 1;
+      } finally {
+        service.close();
+      }
+    });
+
+  program
+    .command("restore")
+    .description(
+      "Restore both Markdown vault and SQLite database from a dual-store backup snapshot.",
+    )
+    .argument("<sourcePath>", "Path to backup snapshot directory to restore")
+    .option(
+      "-d, --dir <directory>",
+      "Target workspace directory",
+      process.cwd(),
+    )
+    .option(
+      "--clean",
+      "Remove existing workspace files before restoring",
+      false,
+    )
+    .action((sourcePath: string, options: { dir: string; clean?: boolean }) => {
+      try {
+        const result = ContextService.restore(options.dir, sourcePath, {
+          cleanExisting: options.clean,
+        });
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } catch (err) {
+        process.stderr.write(
+          `Restore failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command("doctor")
+    .description(
+      "Diagnose workspace health, schema versions, index freshness, orphaned files, expired leases, missing provenance, and rebuilt database state.",
+    )
+    .argument("[directory]", "Workspace directory", process.cwd())
+    .action((directory: string) => {
+      const report = ContextService.doctor(directory);
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      if (!report.healthy) {
+        process.exitCode = 1;
       }
     });
 
@@ -722,6 +799,64 @@ export function createProgram(): Command {
         service.close();
       }
     });
+
+  program
+    .command("export")
+    .description(
+      "Export workspace including Markdown vault and SQLite operational state.",
+    )
+    .argument("[outputPath]", "Export destination file path")
+    .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+    .option("--stdout", "Print raw export JSON to stdout", false)
+    .action(
+      (
+        outputPath: string | undefined,
+        options: { dir: string; stdout?: boolean },
+      ) => {
+        const service = new ContextService(options.dir);
+        try {
+          const result = service.exportWorkspace({ outputPath });
+          if (options.stdout) {
+            process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+          } else {
+            process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+          }
+        } finally {
+          service.close();
+        }
+      },
+    );
+
+  program
+    .command("import")
+    .description(
+      "Import workspace data with deterministic ID collision policies.",
+    )
+    .argument("<sourceFile>", "Path to export JSON file to import")
+    .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+    .option(
+      "--on-collision <policy>",
+      "ID collision policy (skip, replace, error)",
+      "skip",
+    )
+    .action(
+      (sourceFile: string, options: { dir: string; onCollision: string }) => {
+        const service = new ContextService(options.dir);
+        try {
+          const result = service.importWorkspace(sourceFile, {
+            onCollision: options.onCollision as "skip" | "replace" | "error",
+          });
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        } catch (err) {
+          process.stderr.write(
+            `Import failed: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          process.exitCode = 1;
+        } finally {
+          service.close();
+        }
+      },
+    );
 
   program
     .command("connect")

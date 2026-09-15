@@ -21,12 +21,14 @@ Implemented and tested in the current foundation:
 - Stdio connection self-check (`contextpact connect --check`) validating live server bootstrap and tool invocation.
 - Profile-based tool exposure ensuring default agent profiles never see approval tools.
 - Parity test suite enforcing zero undocumented gaps across interfaces.
+- Dual-store workspace backup and point-in-time restore covering both Markdown vault and SQLite database.
+- Portable workspace export and import with deterministic ID collision policies (skip, replace, error).
+- Workspace doctor diagnosing layout, schema versions, index freshness, orphaned files, expired leases, missing provenance, and rebuilt database state.
 
 Planned for v1.0 and not yet advertised as supported:
 
 - Clean-machine recorded release evidence for Claude Code, Codex, and Cursor host integrations.
 - Obsidian edit reconciliation workflow and packaging.
-- Import, export, backup and recovery.
 - Cross-platform clean-install and end-to-end proof.
 
 ## Intended experience
@@ -80,13 +82,18 @@ Default agent profiles connecting via MCP hold execution leases and propose know
 
 ### Documented interface differences
 
-Five CLI maintenance and runner commands have no MCP counterpart:
+Ten CLI maintenance and runner commands have no MCP counterpart:
 
 1. `init`: Workspace filesystem initialization executed from the terminal before agent processes launch.
 2. `connect`: Host client configuration utility for writing MCP server definitions into external host configs (Claude, Codex, Cursor) or printing generic MCP blocks.
 3. `mcp`: CLI transport launcher running the MCP server over stdio.
 4. `reindex`: Offline administrative tool to rebuild SQLite FTS5 search indexes from disk.
 5. `reconcile`: Offline administrative tool to reconcile external Markdown knowledge edits with SQLite state.
+6. `export`: Offline administrative tool extracting Markdown vault and SQLite operational state into a structured archive.
+7. `import`: Offline administrative tool importing external archives with deterministic collision policies.
+8. `backup`: Offline administrative tool creating dual-store point-in-time snapshots covering both Markdown vault and SQLite database.
+9. `restore`: Offline administrative recovery tool restoring snapshots covering both Markdown vault and SQLite database.
+10. `doctor`: Diagnostic health check identifying damage, index staleness, schema drift, and rebuilt database state.
 
 ## Architecture
 

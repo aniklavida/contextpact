@@ -189,6 +189,36 @@ export const DOCUMENTED_EXCEPTIONS: readonly DocumentedException[] = [
     reason:
       "Host client configuration utility for writing MCP server definitions into external host configs (Claude, Codex, Cursor) or printing generic MCP blocks. An MCP session cannot configure external host launch files.",
   },
+  {
+    interface: "cli",
+    name: "export",
+    reason:
+      "Offline administrative export command extracting Markdown vault and SQLite operational state into a structured archive.",
+  },
+  {
+    interface: "cli",
+    name: "import",
+    reason:
+      "Offline administrative import command restoring or merging workspace archives with deterministic collision policies.",
+  },
+  {
+    interface: "cli",
+    name: "backup",
+    reason:
+      "Offline administrative backup command creating dual-store point-in-time snapshots covering both Markdown vault and SQLite database.",
+  },
+  {
+    interface: "cli",
+    name: "restore",
+    reason:
+      "Offline administrative recovery command restoring dual-store snapshots covering both Markdown vault and SQLite database.",
+  },
+  {
+    interface: "cli",
+    name: "doctor",
+    reason:
+      "Diagnostic health check identifying workspace damage, index staleness, schema drift, and rebuilt database state.",
+  },
 ] as const;
 
 export interface ParityReport {
