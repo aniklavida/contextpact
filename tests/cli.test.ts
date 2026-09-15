@@ -324,4 +324,136 @@ describe("CLI surface commands over one core", () => {
     expect(resumed.lease.agentId).toBe("agent-incoming");
     expect(resumed.nextAction).toBe("Execute phase 2 verification");
   });
+
+  it("exports and imports workspace via CLI commands", async () => {
+    // Propose an approved item
+    await runCli([
+      "propose",
+      "--dir",
+      tempDir,
+      "--type",
+      "rule",
+      "--title",
+      "CLI Export Rule",
+      "--content",
+      "Exportable via CLI",
+    ]);
+
+    const exportFilePath = join(tempDir, "cli-export.json");
+    const exportResult = await runCli([
+      "export",
+      exportFilePath,
+      "--dir",
+      tempDir,
+    ]);
+    expect(exportResult.exitCode).toBeUndefined();
+    expect(existsSync(exportFilePath)).toBe(true);
+
+    const exportOutput = JSON.parse(exportResult.stdout);
+    expect(exportOutput.contextItemCount).toBeGreaterThanOrEqual(1);
+
+    // Import into a target workspace
+    const targetDir = mkdtempSync(
+      join(tmpdir(), "contextpact-cli-import-target-"),
+    );
+    try {
+      initializeWorkspace(targetDir, "Import Target");
+      const importResult = await runCli([
+        "import",
+        exportFilePath,
+        "--dir",
+        targetDir,
+        "--on-collision",
+        "replace",
+      ]);
+      expect(importResult.exitCode).toBeUndefined();
+      const importOutput = JSON.parse(importResult.stdout);
+      expect(importOutput.imported.contextItems).toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(targetDir, { recursive: true, force: true });
+    }
+  });
+
+  it("backs up and restores workspace via CLI commands", async () => {
+    await runCli([
+      "propose",
+      "--dir",
+      tempDir,
+      "--type",
+      "fact",
+      "--title",
+      "CLI Backup Fact",
+      "--content",
+      "Dual-store backup verified via CLI",
+    ]);
+
+    const backupDirPath = join(tempDir, "custom-backup");
+    const backupResult = await runCli([
+      "backup",
+      backupDirPath,
+      "--dir",
+      tempDir,
+    ]);
+    expect(backupResult.exitCode).toBeUndefined();
+    expect(existsSync(backupDirPath)).toBe(true);
+
+    const backupOutput = JSON.parse(backupResult.stdout);
+    expect(backupOutput.stores).toEqual(["markdown", "sqlite"]);
+    expect(backupOutput.itemCount).toBeGreaterThanOrEqual(1);
+
+    const targetDir = mkdtempSync(
+      join(tmpdir(), "contextpact-cli-restore-target-"),
+    );
+    try {
+      const restoreResult = await runCli([
+        "restore",
+        backupDirPath,
+        "--dir",
+        targetDir,
+      ]);
+      expect(restoreResult.exitCode).toBeUndefined();
+      const restoreOutput = JSON.parse(restoreResult.stdout);
+      expect(restoreOutput.stores).toEqual(["markdown", "sqlite"]);
+      expect(restoreOutput.itemCount).toBeGreaterThanOrEqual(1);
+
+      // Verify doctor passes on restored target
+      const doctorResult = await runCli(["doctor", targetDir]);
+      expect(doctorResult.exitCode).toBeUndefined();
+      const doctorOutput = JSON.parse(doctorResult.stdout);
+      expect(doctorOutput.healthy).toBe(true);
+      expect(doctorOutput.issues).toHaveLength(0);
+    } finally {
+      rmSync(targetDir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs reindex and doctor commands via CLI", async () => {
+    // Propose an item
+    await runCli([
+      "propose",
+      "--dir",
+      tempDir,
+      "--type",
+      "rule",
+      "--title",
+      "CLI Reindex Rule",
+      "--content",
+      "Reindexed via CLI command",
+    ]);
+
+    // Reindex
+    const reindexResult = await runCli(["reindex", tempDir]);
+    expect(reindexResult.exitCode).toBeUndefined();
+    const reindexOutput = JSON.parse(reindexResult.stdout);
+    expect(
+      reindexOutput.unchanged.length + reindexOutput.indexed.length,
+    ).toBeGreaterThanOrEqual(1);
+
+    // Doctor
+    const doctorResult = await runCli(["doctor", tempDir]);
+    expect(doctorResult.exitCode).toBeUndefined();
+    const doctorOutput = JSON.parse(doctorResult.stdout);
+    expect(doctorOutput.healthy).toBe(true);
+    expect(doctorOutput.rebuiltDatabase).toBe(false);
+  });
 });

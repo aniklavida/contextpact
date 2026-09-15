@@ -6,6 +6,14 @@ All notable changes will be documented here.
 
 ### Added
 
+- Workspace export command (`export`) and core API serializing Markdown knowledge items and SQLite-owned operational state (tasks, leases, agents, sessions, policies, and audit events) to schema-validated JSON archives.
+- Workspace import command (`import`) and core API with deterministic ID collision policies (`skip` as canonical default, `replace` to overwrite, and `error` to fail closed).
+- Dual-store workspace backup command (`backup`) and core API creating point-in-time snapshot bundles covering both Markdown vault and SQLite database.
+- Workspace restore command (`restore`) and core API recovering both Markdown vault and SQLite database from backup snapshots, rejecting incomplete single-store archives.
+- Diagnostic workspace doctor (`doctor`) command and core API identifying invalid workspace layout, wrong schema versions, stale index hashes, orphaned files, expired leases, missing provenance, and rebuilt database state.
+- Explicit detection and clear reporting of databases rebuilt from Markdown rather than restored, asserting that historical audit trails and task leases cannot be rebuilt.
+- Enhanced reindex command (`reindex`) supporting explicit options for cleaning deleted rows.
+- Documented interface differences for administrative commands (`export`, `import`, `backup`, `restore`, `doctor`) in the surface contract.
 - Guided connection command (`connect`) with dedicated host adapters for Claude Code (`~/.claude.json`), Codex (`~/.codex/config.toml`), and Cursor (`~/.cursor/mcp.json`) merging MCP server configuration idempotently without clobbering unrelated entries.
 - Generic MCP server configuration output validated against Model Context Protocol stdio contract schema.
 - Live MCP connection check (`contextpact connect --check`) spawning the local MCP server over stdio and verifying real tool execution.
