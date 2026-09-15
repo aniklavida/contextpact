@@ -6,6 +6,10 @@ All notable changes will be documented here.
 
 ### Added
 
+- Guided connection command (`connect`) with dedicated host adapters for Claude Code (`~/.claude.json`), Codex (`~/.codex/config.toml`), and Cursor (`~/.cursor/mcp.json`) merging MCP server configuration idempotently without clobbering unrelated entries.
+- Generic MCP server configuration output validated against Model Context Protocol stdio contract schema.
+- Live MCP connection check (`contextpact connect --check`) spawning the local MCP server over stdio and verifying real tool execution.
+- Documented interface difference for the `connect` setup command in the surface registry.
 - Transport-independent core command surface exposed identically across CLI commands and MCP tools covering bootstrap, context, decisions, tasks, and handoffs.
 - Profile-based tool exposure ensuring default agent profiles never see approval tools, while elevated reviewer and human profiles retain approval capability.
 - Parity test suite enumerating CLI commands and MCP tools to prevent undocumented interface drift over time.

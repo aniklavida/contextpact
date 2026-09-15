@@ -53,7 +53,7 @@ Hosted accounts, cloud sync, realtime multi-human teams, large dashboard/Kanban,
 ## v1 acceptance
 
 - Clean install/init passes on macOS, Linux and Windows.
-- Claude Code, Codex and Cursor connection flows are tested; generic MCP setup is documented.
+- Claude Code, Codex and Cursor connection flows are experimental (host verification planned for v1.0); generic MCP setup is documented.
 - Two local agents coordinate non-overlapping tasks and resume from handoff.
 - Conflict rejection and audited stale takeover pass.
 - Proposed knowledge requires approval; superseded decisions stay out of default packs.

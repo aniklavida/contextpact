@@ -13,6 +13,12 @@ import type {
 import type { TaskStatus } from "./domain/agent.js";
 import type { EvidenceItem, HandoffOutcome } from "./domain/handoff.js";
 import { isOperationalContextType } from "./domain/lifecycle.js";
+import {
+  connectClient,
+  formatGenericMcpBlock,
+  isSupportedClient,
+  runConnectionCheck,
+} from "./mcp/connect/index.js";
 import { runStdioServer } from "./mcp/server.js";
 import {
   initializeWorkspace,
@@ -716,6 +722,76 @@ export function createProgram(): Command {
         service.close();
       }
     });
+
+  program
+    .command("connect")
+    .description(
+      "Connect ContextPact MCP server to host AI clients (claude, codex, cursor) or print generic MCP config.",
+    )
+    .argument(
+      "[client]",
+      "Client identifier (claude, codex, cursor, or generic/other)",
+    )
+    .option(
+      "--check",
+      "Spawn MCP server over stdio, invoke a real tool, and report connection status",
+    )
+    .option(
+      "--base-dir <directory>",
+      "Base directory for locating client configuration file (default: user home)",
+    )
+    .option("--command <command>", "Custom MCP server command executable")
+    .option("--args <args...>", "Custom MCP server arguments")
+    .action(
+      async (
+        client: string | undefined,
+        options: {
+          check?: boolean;
+          baseDir?: string;
+          command?: string;
+          args?: string[];
+        },
+      ) => {
+        if (options.check) {
+          const checkResult = await runConnectionCheck({
+            command: options.command,
+            args: options.args,
+          });
+          if (!checkResult.ok) {
+            process.stderr.write(
+              `MCP connection check failed: ${checkResult.error}\n`,
+            );
+            process.exitCode = 1;
+            return;
+          }
+          process.stdout.write(`${JSON.stringify(checkResult, null, 2)}\n`);
+          return;
+        }
+
+        if (!client || !isSupportedClient(client)) {
+          const block = formatGenericMcpBlock({
+            command: options.command,
+            args: options.args,
+          });
+          process.stdout.write(block);
+          return;
+        }
+
+        try {
+          const result = connectClient(client, {
+            baseDir: options.baseDir,
+            command: options.command,
+            args: options.args,
+          });
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        } catch (error) {
+          process.stderr.write(
+            `Failed to connect client '${client}': ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+          process.exitCode = 1;
+        }
+      },
+    );
 
   program
     .command("mcp")

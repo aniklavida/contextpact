@@ -15,14 +15,16 @@ Implemented and tested in the current foundation:
 - Local workspace layout creation.
 - SQLite schema bootstrap with WAL and FTS5.
 - Complete knowledge lifecycle, context-pack retrieval, and supersession.
-- Task leases, conflict handling, and structured handoffs.
+- Single-machine task leases, conflict handling, and structured handoffs.
 - Transport-independent core with 1:1 parity between CLI commands and MCP tools across bootstrap, context, decisions, tasks, and handoffs.
+- Guided MCP client configuration adapters (`connect claude`, `connect codex`, `connect cursor`) and generic MCP block generator.
+- Stdio connection self-check (`contextpact connect --check`) validating live server bootstrap and tool invocation.
 - Profile-based tool exposure ensuring default agent profiles never see approval tools.
 - Parity test suite enforcing zero undocumented gaps across interfaces.
 
 Planned for v1.0 and not yet advertised as supported:
 
-- Guided Claude Code, Codex and Cursor connection.
+- Clean-machine recorded release evidence for Claude Code, Codex, and Cursor host integrations.
 - Obsidian edit reconciliation workflow and packaging.
 - Import, export, backup and recovery.
 - Cross-platform clean-install and end-to-end proof.
@@ -33,10 +35,22 @@ Planned for v1.0 and not yet advertised as supported:
 contextpact init
 contextpact connect claude
 contextpact connect codex
+contextpact connect --check
 contextpact status
 ```
 
-The connection commands above describe the planned v1 experience; only the documented foundation commands should be treated as implemented before the release checklist passes.
+### Host connection status
+
+ContextPact provides guided configuration adapters for supported hosts and generic output for other MCP clients:
+
+| Host Client | Adapter Status | Host Evidence Status | Configuration Target   |
+| ----------- | -------------- | -------------------- | ---------------------- |
+| Claude Code | experimental   | planned              | `~/.claude.json`       |
+| Codex       | experimental   | planned              | `~/.codex/config.toml` |
+| Cursor      | experimental   | planned              | `~/.cursor/mcp.json`   |
+| Generic MCP | experimental   | planned              | Standard stdio block   |
+
+Every host adapter merges ContextPact MCP server settings without modifying unrelated keys, remains strictly idempotent across repeated runs, and fails without writes on malformed configurations. Host verification remains planned until clean-machine release evidence is recorded.
 
 ## Command and tool surface
 
@@ -66,12 +80,13 @@ Default agent profiles connecting via MCP hold execution leases and propose know
 
 ### Documented interface differences
 
-Four CLI maintenance and runner commands have no MCP counterpart:
+Five CLI maintenance and runner commands have no MCP counterpart:
 
 1. `init`: Workspace filesystem initialization executed from the terminal before agent processes launch.
-2. `mcp`: CLI transport launcher running the MCP server over stdio.
-3. `reindex`: Offline administrative tool to rebuild SQLite FTS5 search indexes from disk.
-4. `reconcile`: Offline administrative tool to reconcile external Markdown knowledge edits with SQLite state.
+2. `connect`: Host client configuration utility for writing MCP server definitions into external host configs (Claude, Codex, Cursor) or printing generic MCP blocks.
+3. `mcp`: CLI transport launcher running the MCP server over stdio.
+4. `reindex`: Offline administrative tool to rebuild SQLite FTS5 search indexes from disk.
+5. `reconcile`: Offline administrative tool to reconcile external Markdown knowledge edits with SQLite state.
 
 ## Architecture
 
