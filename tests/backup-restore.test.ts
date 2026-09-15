@@ -172,10 +172,11 @@ describe("Dual-store workspace backup and point-in-time restore", () => {
 
     targetService.close();
 
-    // Verify workspace status on target
-    const targetStatus = initializeWorkspace(targetRoot);
-    expect(targetStatus.initialized).toBe(true);
-    expect(targetStatus.databaseExists).toBe(true);
+    // Doctor confirms restored workspace is completely healthy with 0 issues
+    const doctorReport = ContextService.doctor(targetRoot);
+    expect(doctorReport.healthy).toBe(true);
+    expect(doctorReport.rebuiltDatabase).toBe(false);
+    expect(doctorReport.issues).toHaveLength(0);
   });
 
   it("rejects incomplete backup missing SQLite database", () => {

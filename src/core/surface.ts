@@ -213,6 +213,12 @@ export const DOCUMENTED_EXCEPTIONS: readonly DocumentedException[] = [
     reason:
       "Offline administrative recovery command restoring dual-store snapshots covering both Markdown vault and SQLite database.",
   },
+  {
+    interface: "cli",
+    name: "doctor",
+    reason:
+      "Diagnostic health check identifying workspace damage, index staleness, schema drift, and rebuilt database state.",
+  },
 ] as const;
 
 export interface ParityReport {

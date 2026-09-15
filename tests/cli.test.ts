@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createProgram } from "../src/cli.js";
-import { ContextService, initializeWorkspace } from "../src/index.js";
+import { initializeWorkspace } from "../src/index.js";
 
 describe("CLI surface commands over one core", () => {
   let tempDir: string;
@@ -416,17 +416,44 @@ describe("CLI surface commands over one core", () => {
       expect(restoreOutput.stores).toEqual(["markdown", "sqlite"]);
       expect(restoreOutput.itemCount).toBeGreaterThanOrEqual(1);
 
-      const service = new ContextService(targetDir);
-      try {
-        const items = service.search("CLI Backup Fact", {
-          includeProposed: true,
-        });
-        expect(items.length).toBeGreaterThanOrEqual(1);
-      } finally {
-        service.close();
-      }
+      // Verify doctor passes on restored target
+      const doctorResult = await runCli(["doctor", targetDir]);
+      expect(doctorResult.exitCode).toBeUndefined();
+      const doctorOutput = JSON.parse(doctorResult.stdout);
+      expect(doctorOutput.healthy).toBe(true);
+      expect(doctorOutput.issues).toHaveLength(0);
     } finally {
       rmSync(targetDir, { recursive: true, force: true });
     }
+  });
+
+  it("runs reindex and doctor commands via CLI", async () => {
+    // Propose an item
+    await runCli([
+      "propose",
+      "--dir",
+      tempDir,
+      "--type",
+      "rule",
+      "--title",
+      "CLI Reindex Rule",
+      "--content",
+      "Reindexed via CLI command",
+    ]);
+
+    // Reindex
+    const reindexResult = await runCli(["reindex", tempDir]);
+    expect(reindexResult.exitCode).toBeUndefined();
+    const reindexOutput = JSON.parse(reindexResult.stdout);
+    expect(
+      reindexOutput.unchanged.length + reindexOutput.indexed.length,
+    ).toBeGreaterThanOrEqual(1);
+
+    // Doctor
+    const doctorResult = await runCli(["doctor", tempDir]);
+    expect(doctorResult.exitCode).toBeUndefined();
+    const doctorOutput = JSON.parse(doctorResult.stdout);
+    expect(doctorOutput.healthy).toBe(true);
+    expect(doctorOutput.rebuiltDatabase).toBe(false);
   });
 });

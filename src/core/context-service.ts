@@ -105,6 +105,7 @@ import {
 import {
   type BackupOptions,
   type BackupResult,
+  type DoctorReport,
   type ExportOptions,
   type ExportResult,
   type ImportOptions,
@@ -115,6 +116,7 @@ import {
 } from "../domain/maintenance.js";
 import {
   backupWorkspace as coreBackupWorkspace,
+  doctorWorkspace as coreDoctorWorkspace,
   exportWorkspace as coreExportWorkspace,
   importWorkspace as coreImportWorkspace,
   restoreWorkspace as coreRestoreWorkspace,
@@ -2839,6 +2841,10 @@ export class ContextService {
     return coreRestoreWorkspace(this.workspaceRoot, backupSource, options);
   }
 
+  diagnoseWorkspace(): DoctorReport {
+    return coreDoctorWorkspace(this.workspaceRoot, this.db);
+  }
+
   static export(workspaceRoot: string, options?: ExportOptions): ExportResult {
     const service = new ContextService(workspaceRoot);
     try {
@@ -2871,6 +2877,10 @@ export class ContextService {
     options?: RestoreOptions,
   ): RestoreResult {
     return coreRestoreWorkspace(workspaceRoot, backupSource, options);
+  }
+
+  static doctor(workspaceRoot: string): DoctorReport {
+    return coreDoctorWorkspace(workspaceRoot);
   }
 
   static recover(workspaceRoot: string): RecoveryResult {

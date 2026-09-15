@@ -195,3 +195,32 @@ export interface RestoreResult {
   taskCount: number;
   auditEventCount: number;
 }
+
+export type DoctorIssueKind =
+  | "invalid_workspace"
+  | "wrong_schema_version"
+  | "stale_index"
+  | "orphaned_file"
+  | "expired_lease"
+  | "missing_provenance"
+  | "rebuilt_database";
+
+export interface DoctorIssue {
+  kind: DoctorIssueKind;
+  severity: "error" | "warning";
+  message: string;
+  repair: string;
+  details?: Record<string, unknown> | undefined;
+}
+
+export interface DoctorReport {
+  workspaceRoot: string;
+  healthy: boolean;
+  checkedAt: string;
+  rebuiltDatabase: boolean;
+  issues: DoctorIssue[];
+  summary: {
+    errors: number;
+    warnings: number;
+  };
+}

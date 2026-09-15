@@ -27,6 +27,10 @@ ContextPact is a local-first context and coordination layer for people who move 
 - SQLite is canonical for structured operational state and audit history.
 - FTS5 and future optional embeddings are rebuildable indexes.
 - Every data type has one owner; reconciliation never silently overwrites ambiguity.
+- Dual-store backups capture both Markdown vault and SQLite database atomically; restoring one without the other is not a restore.
+- Workspace exports serialize both Markdown knowledge items and SQLite operational state (tasks, leases, agents, sessions, policies, and audit history).
+- Workspace imports enforce deterministic ID collision policies: `skip` (default: preserves existing canonical local state), `replace` (overwrites local state with incoming records), and `error` (fails closed on any collision).
+- Reindexing rebuilds search indexes from Markdown, but cannot restore leases or audit history; diagnostics report rebuilt databases plainly and never claim recovered history.
 
 ## Safety contract
 

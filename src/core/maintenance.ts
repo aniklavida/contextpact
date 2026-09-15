@@ -24,6 +24,8 @@ import {
   type BackupOptions,
   type BackupResult,
   type CollisionPolicy,
+  type DoctorIssue,
+  type DoctorReport,
   type ExportOptions,
   type ExportResult,
   type ImportCollision,
@@ -38,13 +40,22 @@ import {
 } from "../domain/maintenance.js";
 import type { PolicyRecord } from "../domain/policy.js";
 import type { LeaseRecord } from "../domain/task.js";
+import { workspaceManifestSchema } from "../domain/workspace.js";
 import {
+  getCurrentMigrationVersion,
   isDatabaseHealthy,
   openDatabase,
   rebuildFtsIndex,
 } from "../storage/database.js";
-import { saveKnowledgeItem } from "../storage/markdown.js";
-import { computeDocumentHash } from "../storage/reconciliation.js";
+import {
+  parseMarkdownKnowledgeItem,
+  saveKnowledgeItem,
+} from "../storage/markdown.js";
+import {
+  computeDocumentHash,
+  getWorkspaceMarkdownFiles,
+} from "../storage/reconciliation.js";
+import { schemaVersion } from "../storage/schema.js";
 import { readWorkspaceStatus, workspacePaths } from "../workspace/layout.js";
 
 export function exportWorkspace(
@@ -922,5 +933,349 @@ export function restoreWorkspace(
     itemCount,
     taskCount,
     auditEventCount,
+  };
+}
+
+export function doctorWorkspace(
+  workspaceRoot: string,
+  database?: Database.Database,
+): DoctorReport {
+  const root = resolve(workspaceRoot);
+  const paths = workspacePaths(root);
+  const issues: DoctorIssue[] = [];
+  let rebuiltDatabase = false;
+
+  // 1. Workspace validity
+  if (!existsSync(paths.root) || !existsSync(paths.contextRoot)) {
+    issues.push({
+      kind: "invalid_workspace",
+      severity: "error",
+      message: `Workspace directory or '.contextpact' folder does not exist at '${root}'.`,
+      repair:
+        "Run 'contextpact init' to initialize workspace layout, or restore from backup using 'contextpact restore <backupPath>'.",
+    });
+    return {
+      workspaceRoot: root,
+      healthy: false,
+      checkedAt: new Date().toISOString(),
+      rebuiltDatabase: false,
+      issues,
+      summary: { errors: issues.length, warnings: 0 },
+    };
+  }
+
+  if (!existsSync(paths.manifest)) {
+    issues.push({
+      kind: "invalid_workspace",
+      severity: "error",
+      message: `Workspace manifest 'pact.yaml' is missing at '${paths.manifest}'.`,
+      repair:
+        "Run 'contextpact init' to initialize workspace layout, or restore from backup using 'contextpact restore <backupPath>'.",
+    });
+  } else {
+    try {
+      const raw = YAML.parse(readFileSync(paths.manifest, "utf8"));
+      workspaceManifestSchema.parse(raw);
+    } catch (err) {
+      issues.push({
+        kind: "invalid_workspace",
+        severity: "error",
+        message: `Workspace manifest 'pact.yaml' is invalid or corrupt: ${(err as Error).message}`,
+        repair:
+          "Restore a valid 'pact.yaml' from backup or re-initialize with 'contextpact init'.",
+      });
+    }
+  }
+
+  if (!existsSync(paths.database)) {
+    issues.push({
+      kind: "invalid_workspace",
+      severity: "error",
+      message: `SQLite database is missing at '${paths.database}'.`,
+      repair:
+        "Restore database from a dual-store backup snapshot using 'contextpact restore <backupPath>', or reindex Markdown files using 'contextpact reindex'.",
+    });
+    const errors = issues.filter((i) => i.severity === "error").length;
+    const warnings = issues.filter((i) => i.severity === "warning").length;
+    return {
+      workspaceRoot: root,
+      healthy: false,
+      checkedAt: new Date().toISOString(),
+      rebuiltDatabase: false,
+      issues,
+      summary: { errors, warnings },
+    };
+  }
+
+  if (!isDatabaseHealthy(paths.database)) {
+    issues.push({
+      kind: "invalid_workspace",
+      severity: "error",
+      message: `SQLite database at '${paths.database}' failed integrity check (corrupted).`,
+      repair:
+        "Restore from a valid dual-store backup using 'contextpact restore <backupPath>', or recover database using 'contextpact recover'.",
+    });
+    const errors = issues.filter((i) => i.severity === "error").length;
+    const warnings = issues.filter((i) => i.severity === "warning").length;
+    return {
+      workspaceRoot: root,
+      healthy: false,
+      checkedAt: new Date().toISOString(),
+      rebuiltDatabase: false,
+      issues,
+      summary: { errors, warnings },
+    };
+  }
+
+  // Open database for deep health checks without auto-migrating
+  const ownsDb = !database;
+  const db = database ?? new Database(paths.database);
+
+  try {
+    // 2. Schema version check
+    const currentVersion = getCurrentMigrationVersion(db);
+    if (currentVersion !== schemaVersion) {
+      issues.push({
+        kind: "wrong_schema_version",
+        severity: "error",
+        message: `Database schema version (${currentVersion}) does not match expected schema version (${schemaVersion}).`,
+        repair:
+          "Run 'contextpact reindex' to apply pending database migrations, or restore a compatible database backup.",
+        details: { currentVersion, expectedVersion: schemaVersion },
+      });
+    }
+
+    // 3. Stale index check
+    const markdownFiles = getWorkspaceMarkdownFiles(root);
+    const itemRows = db
+      .prepare(
+        "SELECT id, document_path, document_hash, version FROM context_items",
+      )
+      .all() as Array<{
+      id: string;
+      document_path: string | null;
+      document_hash: string | null;
+      version: number;
+    }>;
+
+    const itemsByPath = new Map<string, (typeof itemRows)[0]>();
+    const itemsById = new Map<string, (typeof itemRows)[0]>();
+    for (const row of itemRows) {
+      if (row.document_path) {
+        itemsByPath.set(row.document_path, row);
+      }
+      itemsById.set(row.id, row);
+    }
+
+    let staleFileCount = 0;
+    const unindexedFiles: string[] = [];
+    for (const filePath of markdownFiles) {
+      let content: string;
+      try {
+        content = readFileSync(filePath, "utf8");
+      } catch {
+        continue;
+      }
+      const diskHash = computeDocumentHash(content);
+      const row = itemsByPath.get(filePath);
+      if (!row) {
+        let parsedId: string | undefined;
+        try {
+          const parsed = parseMarkdownKnowledgeItem(content);
+          parsedId = parsed.id;
+        } catch {
+          // Handled in orphaned_file check
+        }
+        const rowById = parsedId ? itemsById.get(parsedId) : undefined;
+        if (!rowById || rowById.document_hash !== diskHash) {
+          staleFileCount++;
+          unindexedFiles.push(filePath);
+        }
+      } else if (row.document_hash !== diskHash) {
+        staleFileCount++;
+        unindexedFiles.push(filePath);
+      }
+    }
+
+    let deletedIndexedCount = 0;
+    for (const row of itemRows) {
+      if (row.document_path && !existsSync(row.document_path)) {
+        deletedIndexedCount++;
+      }
+    }
+
+    if (staleFileCount > 0 || deletedIndexedCount > 0) {
+      issues.push({
+        kind: "stale_index",
+        severity: "warning",
+        message: `Search index is stale: ${staleFileCount} file(s) modified or unindexed, and ${deletedIndexedCount} indexed record(s) missing from disk.`,
+        repair:
+          "Run 'contextpact reindex' to synchronise SQLite search index and document hashes with files on disk.",
+        details: { staleFileCount, deletedIndexedCount, unindexedFiles },
+      });
+    }
+
+    // 4. Orphaned file check
+    const checkDirForOrphans = (dir: string) => {
+      if (!existsSync(dir)) return;
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          checkDirForOrphans(full);
+        } else if (entry.isFile()) {
+          if (!entry.name.endsWith(".md")) {
+            issues.push({
+              kind: "orphaned_file",
+              severity: "warning",
+              message: `Orphaned untracked file '${full}' found in workspace storage (not a Markdown context file).`,
+              repair:
+                "Remove the invalid or untracked file from workspace knowledge directories, or run 'contextpact reindex --clean-deleted'.",
+              details: { filePath: full },
+            });
+          } else {
+            try {
+              const raw = readFileSync(full, "utf8");
+              parseMarkdownKnowledgeItem(raw);
+            } catch (err) {
+              issues.push({
+                kind: "orphaned_file",
+                severity: "warning",
+                message: `Orphaned unparseable Markdown file '${full}': ${(err as Error).message}`,
+                repair:
+                  "Remove the invalid or untracked file from workspace knowledge directories, or run 'contextpact reindex --clean-deleted'.",
+                details: { filePath: full },
+              });
+            }
+          }
+        }
+      }
+    };
+    checkDirForOrphans(paths.knowledge);
+    checkDirForOrphans(paths.handoffs);
+
+    for (const row of itemRows) {
+      if (row.document_path && !existsSync(row.document_path)) {
+        issues.push({
+          kind: "orphaned_file",
+          severity: "warning",
+          message: `Database context item '${row.id}' references missing file '${row.document_path}'.`,
+          repair:
+            "Remove the invalid or untracked file from workspace knowledge directories, or run 'contextpact reindex --clean-deleted'.",
+          details: { id: row.id, documentPath: row.document_path },
+        });
+      }
+    }
+
+    // 5. Expired lease check
+    const nowIso = new Date().toISOString();
+    const expiredLeases = db
+      .prepare(
+        "SELECT task_id, agent_id, expires_at FROM task_leases WHERE expires_at < ?",
+      )
+      .all(nowIso) as Array<{
+      task_id: string;
+      agent_id: string;
+      expires_at: string;
+    }>;
+
+    for (const lease of expiredLeases) {
+      issues.push({
+        kind: "expired_lease",
+        severity: "warning",
+        message: `Task lease for task '${lease.task_id}' held by agent '${lease.agent_id}' expired at ${lease.expires_at}.`,
+        repair:
+          "Release the expired lease using 'contextpact task-release' or claim task with stale takeover using 'contextpact task-claim --stale-reason'.",
+        details: {
+          taskId: lease.task_id,
+          agentId: lease.agent_id,
+          expiresAt: lease.expires_at,
+        },
+      });
+    }
+
+    // 6. Missing provenance check
+    const itemsMissingProvenance = db
+      .prepare(
+        "SELECT id, actor, source FROM context_items WHERE actor IS NULL OR actor = '' OR source IS NULL OR source = ''",
+      )
+      .all() as Array<{
+      id: string;
+      actor: string | null;
+      source: string | null;
+    }>;
+
+    for (const item of itemsMissingProvenance) {
+      issues.push({
+        kind: "missing_provenance",
+        severity: "warning",
+        message: `Context item '${item.id}' is missing required actor or source provenance.`,
+        repair:
+          "Update the record with valid actor/source provenance, or re-record with provenance using 'contextpact propose'.",
+        details: { id: item.id },
+      });
+    }
+
+    // 7. Rebuilt database detection
+    const totalContextItems = itemRows.length;
+    const totalAudits = (
+      db.prepare("SELECT count(*) as c FROM audit_events").get() as {
+        c: number;
+      }
+    ).c;
+    const contextItemAudits = (
+      db
+        .prepare(
+          "SELECT count(*) as c FROM audit_events WHERE entity_type = 'context_item'",
+        )
+        .get() as { c: number }
+    ).c;
+    const hasRebuiltEvent = !!db
+      .prepare(
+        "SELECT id FROM audit_events WHERE event_type = 'database_rebuilt'",
+      )
+      .get();
+    const hasCorruptBackup =
+      existsSync(paths.contextRoot) &&
+      readdirSync(paths.contextRoot).some((f) => f.includes(".corrupt."));
+
+    if (
+      hasRebuiltEvent ||
+      hasCorruptBackup ||
+      (totalContextItems > 0 && (totalAudits === 0 || contextItemAudits === 0))
+    ) {
+      rebuiltDatabase = true;
+      issues.push({
+        kind: "rebuilt_database",
+        severity: "warning",
+        message:
+          "Database was rebuilt from Markdown rather than restored from a dual-store backup. Search index was reconstructed, but historical task leases and audit events cannot be rebuilt from Markdown and have been lost. Do not assume historical audit trail is intact.",
+        repair:
+          "To recover complete historical operational state, restore from a verified dual-store backup snapshot using 'contextpact restore <backupPath>'.",
+        details: {
+          totalContextItems,
+          totalAudits,
+          contextItemAudits,
+          hasRebuiltEvent,
+          hasCorruptBackup,
+        },
+      });
+    }
+  } finally {
+    if (ownsDb) {
+      db.close();
+    }
+  }
+
+  const errors = issues.filter((i) => i.severity === "error").length;
+  const warnings = issues.filter((i) => i.severity === "warning").length;
+
+  return {
+    workspaceRoot: root,
+    healthy: issues.length === 0,
+    checkedAt: new Date().toISOString(),
+    rebuiltDatabase,
+    issues,
+    summary: { errors, warnings },
   };
 }
