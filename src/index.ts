@@ -9,6 +9,7 @@ export * from "./domain/policy.js";
 export * from "./domain/task.js";
 export * from "./domain/workspace.js";
 export * from "./mcp/server.js";
+export * from "./mcp/connect/index.js";
 export * from "./storage/atomic.js";
 export * from "./storage/database.js";
 export * from "./storage/markdown.js";

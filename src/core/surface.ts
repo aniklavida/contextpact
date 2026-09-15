@@ -183,6 +183,12 @@ export const DOCUMENTED_EXCEPTIONS: readonly DocumentedException[] = [
     reason:
       "Offline administrative maintenance command for reconciling external Markdown knowledge edits with SQLite operational state.",
   },
+  {
+    interface: "cli",
+    name: "connect",
+    reason:
+      "Host client configuration utility for writing MCP server definitions into external host configs (Claude, Codex, Cursor) or printing generic MCP blocks. An MCP session cannot configure external host launch files.",
+  },
 ] as const;
 
 export interface ParityReport {
