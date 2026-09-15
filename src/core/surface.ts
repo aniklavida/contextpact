@@ -201,6 +201,18 @@ export const DOCUMENTED_EXCEPTIONS: readonly DocumentedException[] = [
     reason:
       "Offline administrative import command restoring or merging workspace archives with deterministic collision policies.",
   },
+  {
+    interface: "cli",
+    name: "backup",
+    reason:
+      "Offline administrative backup command creating dual-store point-in-time snapshots covering both Markdown vault and SQLite database.",
+  },
+  {
+    interface: "cli",
+    name: "restore",
+    reason:
+      "Offline administrative recovery command restoring dual-store snapshots covering both Markdown vault and SQLite database.",
+  },
 ] as const;
 
 export interface ParityReport {

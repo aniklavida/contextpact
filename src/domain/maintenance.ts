@@ -165,3 +165,33 @@ export interface ImportResult {
   };
   collisions: ImportCollision[];
 }
+
+export interface BackupOptions {
+  outputPath?: string | undefined;
+}
+
+export interface BackupResult {
+  backupPath: string;
+  createdAt: string;
+  workspaceId: string;
+  workspaceName: string;
+  stores: ["markdown", "sqlite"];
+  itemCount: number;
+  taskCount: number;
+  auditEventCount: number;
+}
+
+export interface RestoreOptions {
+  cleanExisting?: boolean | undefined;
+}
+
+export interface RestoreResult {
+  restoredAt: string;
+  backupPath: string;
+  workspaceId: string;
+  workspaceName: string;
+  stores: ["markdown", "sqlite"];
+  itemCount: number;
+  taskCount: number;
+  auditEventCount: number;
+}

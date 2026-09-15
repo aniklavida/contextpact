@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createProgram } from "../src/cli.js";
-import { initializeWorkspace } from "../src/index.js";
+import { ContextService, initializeWorkspace } from "../src/index.js";
 
 describe("CLI surface commands over one core", () => {
   let tempDir: string;
@@ -369,6 +369,62 @@ describe("CLI surface commands over one core", () => {
       expect(importResult.exitCode).toBeUndefined();
       const importOutput = JSON.parse(importResult.stdout);
       expect(importOutput.imported.contextItems).toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(targetDir, { recursive: true, force: true });
+    }
+  });
+
+  it("backs up and restores workspace via CLI commands", async () => {
+    await runCli([
+      "propose",
+      "--dir",
+      tempDir,
+      "--type",
+      "fact",
+      "--title",
+      "CLI Backup Fact",
+      "--content",
+      "Dual-store backup verified via CLI",
+    ]);
+
+    const backupDirPath = join(tempDir, "custom-backup");
+    const backupResult = await runCli([
+      "backup",
+      backupDirPath,
+      "--dir",
+      tempDir,
+    ]);
+    expect(backupResult.exitCode).toBeUndefined();
+    expect(existsSync(backupDirPath)).toBe(true);
+
+    const backupOutput = JSON.parse(backupResult.stdout);
+    expect(backupOutput.stores).toEqual(["markdown", "sqlite"]);
+    expect(backupOutput.itemCount).toBeGreaterThanOrEqual(1);
+
+    const targetDir = mkdtempSync(
+      join(tmpdir(), "contextpact-cli-restore-target-"),
+    );
+    try {
+      const restoreResult = await runCli([
+        "restore",
+        backupDirPath,
+        "--dir",
+        targetDir,
+      ]);
+      expect(restoreResult.exitCode).toBeUndefined();
+      const restoreOutput = JSON.parse(restoreResult.stdout);
+      expect(restoreOutput.stores).toEqual(["markdown", "sqlite"]);
+      expect(restoreOutput.itemCount).toBeGreaterThanOrEqual(1);
+
+      const service = new ContextService(targetDir);
+      try {
+        const items = service.search("CLI Backup Fact", {
+          includeProposed: true,
+        });
+        expect(items.length).toBeGreaterThanOrEqual(1);
+      } finally {
+        service.close();
+      }
     } finally {
       rmSync(targetDir, { recursive: true, force: true });
     }

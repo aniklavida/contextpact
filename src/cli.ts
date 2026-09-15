@@ -782,6 +782,58 @@ export function createProgram(): Command {
     );
 
   program
+    .command("backup")
+    .description(
+      "Create a point-in-time dual-store snapshot bundle covering Markdown vault and SQLite database.",
+    )
+    .argument("[outputPath]", "Backup destination path")
+    .option("-d, --dir <directory>", "Workspace directory", process.cwd())
+    .action((outputPath: string | undefined, options: { dir: string }) => {
+      const service = new ContextService(options.dir);
+      try {
+        const result = service.backupWorkspace({ outputPath });
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } catch (err) {
+        process.stderr.write(
+          `Backup failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exitCode = 1;
+      } finally {
+        service.close();
+      }
+    });
+
+  program
+    .command("restore")
+    .description(
+      "Restore both Markdown vault and SQLite database from a dual-store backup snapshot.",
+    )
+    .argument("<sourcePath>", "Path to backup snapshot directory to restore")
+    .option(
+      "-d, --dir <directory>",
+      "Target workspace directory",
+      process.cwd(),
+    )
+    .option(
+      "--clean",
+      "Remove existing workspace files before restoring",
+      false,
+    )
+    .action((sourcePath: string, options: { dir: string; clean?: boolean }) => {
+      try {
+        const result = ContextService.restore(options.dir, sourcePath, {
+          cleanExisting: options.clean,
+        });
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } catch (err) {
+        process.stderr.write(
+          `Restore failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exitCode = 1;
+      }
+    });
+
+  program
     .command("connect")
     .description(
       "Connect ContextPact MCP server to host AI clients (claude, codex, cursor) or print generic MCP config.",

@@ -21,6 +21,8 @@ import type {
 } from "../domain/agent.js";
 import type { ContextItem } from "../domain/context.js";
 import {
+  type BackupOptions,
+  type BackupResult,
   type CollisionPolicy,
   type ExportOptions,
   type ExportResult,
@@ -28,13 +30,19 @@ import {
   ImportCollisionError,
   type ImportOptions,
   type ImportResult,
+  type RestoreOptions,
+  type RestoreResult,
   type StoredAuditEvent,
   type WorkspaceExportData,
   workspaceExportSchema,
 } from "../domain/maintenance.js";
 import type { PolicyRecord } from "../domain/policy.js";
 import type { LeaseRecord } from "../domain/task.js";
-import { rebuildFtsIndex } from "../storage/database.js";
+import {
+  isDatabaseHealthy,
+  openDatabase,
+  rebuildFtsIndex,
+} from "../storage/database.js";
 import { saveKnowledgeItem } from "../storage/markdown.js";
 import { computeDocumentHash } from "../storage/reconciliation.js";
 import { readWorkspaceStatus, workspacePaths } from "../workspace/layout.js";
@@ -678,5 +686,241 @@ export function importWorkspace(
       auditEvents: importedAuditEvents,
     },
     collisions,
+  };
+}
+
+export function backupWorkspace(
+  workspaceRoot: string,
+  db?: Database.Database,
+  options?: BackupOptions,
+): BackupResult {
+  const root = resolve(workspaceRoot);
+  const paths = workspacePaths(root);
+  const status = readWorkspaceStatus(root);
+
+  if (!status.initialized || !status.manifest) {
+    throw new Error(
+      `Cannot backup uninitialized workspace at '${root}'. Workspace must be initialized first.`,
+    );
+  }
+
+  if (!existsSync(paths.database) || !isDatabaseHealthy(paths.database)) {
+    throw new Error(
+      `Cannot backup workspace at '${root}': SQLite database is missing or corrupt.`,
+    );
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const defaultBackupPath = join(paths.exports, `backup-${timestamp}`);
+  const backupPath = options?.outputPath
+    ? resolve(options.outputPath)
+    : defaultBackupPath;
+
+  mkdirSync(backupPath, { recursive: true });
+
+  // 1. Copy Markdown vault
+  const targetKnowledge = join(backupPath, "knowledge");
+  const targetHandoffs = join(backupPath, "handoffs");
+  if (existsSync(paths.knowledge)) {
+    cpSync(paths.knowledge, targetKnowledge, { recursive: true });
+  } else {
+    mkdirSync(targetKnowledge, { recursive: true });
+  }
+  if (existsSync(paths.handoffs)) {
+    cpSync(paths.handoffs, targetHandoffs, { recursive: true });
+  } else {
+    mkdirSync(targetHandoffs, { recursive: true });
+  }
+  copyFileSync(paths.manifest, join(backupPath, "pact.yaml"));
+
+  // 2. Checkpoint WAL and copy SQLite database
+  const ownsDb = !db;
+  const activeDb = db ?? openDatabase(paths.database);
+  try {
+    activeDb.pragma("wal_checkpoint(TRUNCATE)");
+  } finally {
+    if (ownsDb) {
+      activeDb.close();
+    }
+  }
+
+  const targetDbPath = join(backupPath, "contextpact.db");
+  copyFileSync(paths.database, targetDbPath);
+
+  if (!isDatabaseHealthy(targetDbPath)) {
+    throw new Error("Backup failed: Snapshot database failed integrity check.");
+  }
+
+  // 3. Collect counts from snapshot database
+  const checkDb = openDatabase(targetDbPath);
+  let itemCount = 0;
+  let taskCount = 0;
+  let auditEventCount = 0;
+  try {
+    itemCount = (
+      checkDb.prepare("SELECT count(*) as c FROM context_items").get() as {
+        c: number;
+      }
+    ).c;
+    taskCount = (
+      checkDb.prepare("SELECT count(*) as c FROM tasks").get() as { c: number }
+    ).c;
+    auditEventCount = (
+      checkDb.prepare("SELECT count(*) as c FROM audit_events").get() as {
+        c: number;
+      }
+    ).c;
+  } finally {
+    checkDb.close();
+  }
+
+  // 4. Write backup metadata manifest
+  const backupMetadata = {
+    formatVersion: 1,
+    createdAt: new Date().toISOString(),
+    workspace: {
+      id: status.manifest.id,
+      name: status.manifest.name,
+      createdAt: status.manifest.createdAt,
+    },
+    stores: ["markdown", "sqlite"] as const,
+  };
+  writeFileSync(
+    join(backupPath, "backup.json"),
+    JSON.stringify(backupMetadata, null, 2),
+    "utf8",
+  );
+
+  return {
+    backupPath,
+    createdAt: backupMetadata.createdAt,
+    workspaceId: status.manifest.id,
+    workspaceName: status.manifest.name,
+    stores: ["markdown", "sqlite"],
+    itemCount,
+    taskCount,
+    auditEventCount,
+  };
+}
+
+export function restoreWorkspace(
+  workspaceRoot: string,
+  backupSource: string,
+  options?: RestoreOptions,
+): RestoreResult {
+  const root = resolve(workspaceRoot);
+  const paths = workspacePaths(root);
+  const sourcePath = resolve(backupSource);
+
+  if (!existsSync(sourcePath)) {
+    throw new Error(
+      `Cannot restore from backup: source path '${sourcePath}' does not exist.`,
+    );
+  }
+
+  const sourceDbPath = join(sourcePath, "contextpact.db");
+  const sourceManifestPath = join(sourcePath, "pact.yaml");
+  const sourceKnowledgePath = join(sourcePath, "knowledge");
+  const sourceHandoffsPath = join(sourcePath, "handoffs");
+
+  // Enforce dual-store rule: both stores must be present
+  if (!existsSync(sourceDbPath)) {
+    throw new Error(
+      "Cannot restore from incomplete backup: missing SQLite database 'contextpact.db'. Dual-store backup must cover both stores.",
+    );
+  }
+
+  if (!existsSync(sourceManifestPath)) {
+    throw new Error(
+      "Cannot restore from incomplete backup: missing workspace manifest 'pact.yaml'. Dual-store backup must cover both stores.",
+    );
+  }
+
+  if (!existsSync(sourceKnowledgePath)) {
+    throw new Error(
+      "Cannot restore from incomplete backup: missing Markdown vault 'knowledge'. Dual-store backup must cover both stores.",
+    );
+  }
+
+  if (!isDatabaseHealthy(sourceDbPath)) {
+    throw new Error(
+      "Cannot restore from corrupted backup: SQLite database failed integrity check.",
+    );
+  }
+
+  if (options?.cleanExisting && existsSync(paths.contextRoot)) {
+    rmSync(paths.contextRoot, { recursive: true, force: true });
+  }
+
+  mkdirSync(paths.root, { recursive: true });
+  mkdirSync(paths.contextRoot, { recursive: true });
+  mkdirSync(paths.exports, { recursive: true });
+
+  copyFileSync(sourceManifestPath, paths.manifest);
+  cpSync(sourceKnowledgePath, paths.knowledge, { recursive: true });
+  if (existsSync(sourceHandoffsPath)) {
+    cpSync(sourceHandoffsPath, paths.handoffs, { recursive: true });
+  } else {
+    mkdirSync(paths.handoffs, { recursive: true });
+  }
+
+  if (existsSync(`${paths.database}-wal`)) {
+    unlinkSync(`${paths.database}-wal`);
+  }
+  if (existsSync(`${paths.database}-shm`)) {
+    unlinkSync(`${paths.database}-shm`);
+  }
+
+  copyFileSync(sourceDbPath, paths.database);
+
+  const restoredDb = openDatabase(paths.database);
+  let itemCount = 0;
+  let taskCount = 0;
+  let auditEventCount = 0;
+  let wsId = "restored";
+  let wsName = "Restored Workspace";
+  try {
+    rebuildFtsIndex(restoredDb);
+    itemCount = (
+      restoredDb.prepare("SELECT count(*) as c FROM context_items").get() as {
+        c: number;
+      }
+    ).c;
+    taskCount = (
+      restoredDb.prepare("SELECT count(*) as c FROM tasks").get() as {
+        c: number;
+      }
+    ).c;
+    auditEventCount = (
+      restoredDb.prepare("SELECT count(*) as c FROM audit_events").get() as {
+        c: number;
+      }
+    ).c;
+    const wsRow = restoredDb
+      .prepare("SELECT id, name FROM workspace LIMIT 1")
+      .get() as { id: string; name: string } | undefined;
+    if (wsRow) {
+      wsId = wsRow.id;
+      wsName = wsRow.name;
+    }
+  } finally {
+    restoredDb.close();
+  }
+
+  const manifestStatus = readWorkspaceStatus(root);
+  if (manifestStatus.manifest) {
+    wsId = manifestStatus.manifest.id;
+    wsName = manifestStatus.manifest.name;
+  }
+
+  return {
+    restoredAt: new Date().toISOString(),
+    backupPath: sourcePath,
+    workspaceId: wsId,
+    workspaceName: wsName,
+    stores: ["markdown", "sqlite"],
+    itemCount,
+    taskCount,
+    auditEventCount,
   };
 }

@@ -103,15 +103,21 @@ import {
   type PackBuilderOptions,
 } from "./pack-builder.js";
 import {
+  type BackupOptions,
+  type BackupResult,
   type ExportOptions,
   type ExportResult,
   type ImportOptions,
   type ImportResult,
+  type RestoreOptions,
+  type RestoreResult,
   type WorkspaceExportData,
 } from "../domain/maintenance.js";
 import {
+  backupWorkspace as coreBackupWorkspace,
   exportWorkspace as coreExportWorkspace,
   importWorkspace as coreImportWorkspace,
+  restoreWorkspace as coreRestoreWorkspace,
 } from "./maintenance.js";
 
 export interface BaseContextInput {
@@ -2822,6 +2828,17 @@ export class ContextService {
     return coreImportWorkspace(this.workspaceRoot, this.db, source, options);
   }
 
+  backupWorkspace(options?: BackupOptions): BackupResult {
+    return coreBackupWorkspace(this.workspaceRoot, this.db, options);
+  }
+
+  restoreWorkspace(
+    backupSource: string,
+    options?: RestoreOptions,
+  ): RestoreResult {
+    return coreRestoreWorkspace(this.workspaceRoot, backupSource, options);
+  }
+
   static export(workspaceRoot: string, options?: ExportOptions): ExportResult {
     const service = new ContextService(workspaceRoot);
     try {
@@ -2842,6 +2859,18 @@ export class ContextService {
     } finally {
       service.close();
     }
+  }
+
+  static backup(workspaceRoot: string, options?: BackupOptions): BackupResult {
+    return coreBackupWorkspace(workspaceRoot, undefined, options);
+  }
+
+  static restore(
+    workspaceRoot: string,
+    backupSource: string,
+    options?: RestoreOptions,
+  ): RestoreResult {
+    return coreRestoreWorkspace(workspaceRoot, backupSource, options);
   }
 
   static recover(workspaceRoot: string): RecoveryResult {
