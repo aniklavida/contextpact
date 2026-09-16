@@ -6,6 +6,14 @@ All notable changes will be documented here.
 
 ### Added
 
+- Obsidian-compatible external vault editing without requiring Obsidian installation or a running daemon.
+- Reindexing and reconciliation of external edits made to document bodies and owned frontmatter fields into SQLite FTS5 search indexes.
+- Adoption of hand-added Markdown files with valid frontmatter into workspace storage and search indexes.
+- Clear, actionable conflict reporting for malformed hand-edits distinguishing invalid YAML syntax from missing required frontmatter fields, leaving files byte-for-byte untouched.
+- Preservation of user-created Markdown notes lacking frontmatter, leaving them untouched and unflagged by diagnostics.
+- Dynamic document path tracking when files are renamed outside ContextPact, preserving stable item identity and searchability.
+- Explicit conflict surfacing for stale external edits and duplicate ID collisions, identifying both sides without silent resolution.
+
 - Workspace export command (`export`) and core API serializing Markdown knowledge items and SQLite-owned operational state (tasks, leases, agents, sessions, policies, and audit events) to schema-validated JSON archives.
 - Workspace import command (`import`) and core API with deterministic ID collision policies (`skip` as canonical default, `replace` to overwrite, and `error` to fail closed).
 - Dual-store workspace backup command (`backup`) and core API creating point-in-time snapshot bundles covering both Markdown vault and SQLite database.
