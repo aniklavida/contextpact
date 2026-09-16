@@ -17,7 +17,12 @@ import {
   openDatabase,
   rebuildFtsIndex,
 } from "./database.js";
-import { parseMarkdownKnowledgeItem } from "./markdown.js";
+import {
+  hasMarkdownFrontmatter,
+  InvalidYamlFrontmatterError,
+  MissingRequiredFrontmatterError,
+  parseMarkdownKnowledgeItem,
+} from "./markdown.js";
 
 export interface ReconciliationConflict {
   id: string;
@@ -26,6 +31,8 @@ export interface ReconciliationConflict {
     | "ambiguous_conflict"
     | "id_collision"
     | "unparseable_file"
+    | "invalid_yaml"
+    | "invalid_frontmatter"
     | "handoff_record_conflict";
   filePath: string;
   diskVersion?: number | undefined;
@@ -116,17 +123,38 @@ export function reconcileWorkspace(
         continue;
       }
 
+      if (!hasMarkdownFrontmatter(raw)) {
+        // Plain Markdown file with no frontmatter: an ordinary user note kept in the folder, left alone
+        continue;
+      }
+
       const diskHash = computeDocumentHash(raw);
       let item: ContextItem;
       try {
         item = parseMarkdownKnowledgeItem(raw);
       } catch (err) {
-        conflicts.push({
-          id: basename(filePath, ".md"),
-          type: "unparseable_file",
-          filePath,
-          message: `Cannot parse Markdown knowledge item in '${filePath}': ${(err as Error).message}`,
-        });
+        if (err instanceof InvalidYamlFrontmatterError) {
+          conflicts.push({
+            id: basename(filePath, ".md"),
+            type: "invalid_yaml",
+            filePath,
+            message: `Invalid YAML frontmatter in '${filePath}': ${err.message}`,
+          });
+        } else if (err instanceof MissingRequiredFrontmatterError) {
+          conflicts.push({
+            id: basename(filePath, ".md"),
+            type: "invalid_frontmatter",
+            filePath,
+            message: `Missing required frontmatter field(s) in '${filePath}': ${err.message}`,
+          });
+        } else {
+          conflicts.push({
+            id: basename(filePath, ".md"),
+            type: "unparseable_file",
+            filePath,
+            message: `Cannot parse Markdown knowledge item in '${filePath}': ${(err as Error).message}`,
+          });
+        }
         continue;
       }
 
@@ -335,7 +363,14 @@ export function reconcileWorkspace(
         } else {
           // Row exists in database
           if (dbRow.document_hash === diskHash) {
-            unchanged.push(item.id);
+            if (dbRow.document_path !== filePath) {
+              db.prepare(
+                "UPDATE context_items SET document_path = ? WHERE id = ?",
+              ).run(filePath, item.id);
+              updated.push(item.id);
+            } else {
+              unchanged.push(item.id);
+            }
           } else {
             // Document hash changed or was missing
             if (item.version < dbRow.version) {

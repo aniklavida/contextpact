@@ -48,6 +48,7 @@ import {
   rebuildFtsIndex,
 } from "../storage/database.js";
 import {
+  hasMarkdownFrontmatter,
   parseMarkdownKnowledgeItem,
   saveKnowledgeItem,
 } from "../storage/markdown.js";
@@ -1076,6 +1077,10 @@ export function doctorWorkspace(
       } catch {
         continue;
       }
+      if (!hasMarkdownFrontmatter(content)) {
+        // Vault note without frontmatter: user notes kept in workspace are left alone
+        continue;
+      }
       const diskHash = computeDocumentHash(content);
       const row = itemsByPath.get(filePath);
       if (!row) {
@@ -1136,6 +1141,10 @@ export function doctorWorkspace(
           } else {
             try {
               const raw = readFileSync(full, "utf8");
+              if (!hasMarkdownFrontmatter(raw)) {
+                // Vault note without frontmatter: user notes kept in workspace are left alone
+                continue;
+              }
               parseMarkdownKnowledgeItem(raw);
             } catch (err) {
               issues.push({
