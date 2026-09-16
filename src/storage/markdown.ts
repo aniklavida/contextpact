@@ -80,6 +80,36 @@ export function getKnowledgeItemPath(
   return join(folderPath, `${id}.md`);
 }
 
+export class InvalidYamlFrontmatterError extends Error {
+  readonly cause?: unknown;
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "InvalidYamlFrontmatterError";
+    this.cause = cause;
+  }
+}
+
+export class MissingRequiredFrontmatterError extends Error {
+  readonly missingFields: string[];
+  constructor(message: string, missingFields: string[]) {
+    super(message);
+    this.name = "MissingRequiredFrontmatterError";
+    this.missingFields = missingFields;
+  }
+}
+
+export function hasMarkdownFrontmatter(raw: string): boolean {
+  const source = raw.replace(/^\uFEFF/, "");
+  if (!source.startsWith("---")) {
+    return false;
+  }
+  const firstNewlineIndex = source.indexOf("\n");
+  if (firstNewlineIndex === -1) {
+    return false;
+  }
+  return source.slice(0, firstNewlineIndex).trim() === "---";
+}
+
 export function parseMarkdownKnowledgeItem(raw: string): ContextItem {
   const source = raw.replace(/^\uFEFF/, "");
 
@@ -89,7 +119,7 @@ export function parseMarkdownKnowledgeItem(raw: string): ContextItem {
 
   const firstNewlineIndex = source.indexOf("\n");
   if (firstNewlineIndex === -1) {
-    throw new Error("Invalid frontmatter delimiter");
+    throw new InvalidYamlFrontmatterError("Invalid frontmatter delimiter");
   }
 
   const firstLine = source.slice(0, firstNewlineIndex).trim();
@@ -100,25 +130,57 @@ export function parseMarkdownKnowledgeItem(raw: string): ContextItem {
   const remainder = source.slice(firstNewlineIndex + 1);
   const match = remainder.match(/^(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/m);
   if (!match || match.index === undefined) {
-    throw new Error("Unclosed YAML frontmatter in Markdown knowledge item");
+    throw new InvalidYamlFrontmatterError(
+      "Unclosed YAML frontmatter in Markdown knowledge item",
+    );
   }
 
   const frontmatterString = remainder.slice(0, match.index);
   const rawBody = remainder.slice(match.index + match[0].length);
 
-  const parsedYaml = YAML.parse(frontmatterString) ?? {};
+  let parsedYaml: unknown;
+  try {
+    parsedYaml = YAML.parse(frontmatterString) ?? {};
+  } catch (err) {
+    throw new InvalidYamlFrontmatterError(
+      `Invalid YAML syntax in frontmatter: ${(err as Error).message}`,
+      err,
+    );
+  }
+
   if (
     typeof parsedYaml !== "object" ||
     parsedYaml === null ||
     Array.isArray(parsedYaml)
   ) {
-    throw new Error("Frontmatter must be a YAML mapping");
+    throw new InvalidYamlFrontmatterError("Frontmatter must be a YAML mapping");
   }
 
-  return contextItemSchema.parse({
-    ...parsedYaml,
+  const result = contextItemSchema.safeParse({
+    ...(parsedYaml as Record<string, unknown>),
     content: rawBody.trim(),
   });
+
+  if (!result.success) {
+    const missingOrInvalid: string[] = [];
+    for (const issue of result.error.issues) {
+      const field = issue.path.join(".");
+      if (
+        issue.code === "invalid_type" &&
+        issue.message.includes("received undefined")
+      ) {
+        missingOrInvalid.push(`missing required field '${field}'`);
+      } else {
+        missingOrInvalid.push(`invalid field '${field}' (${issue.message})`);
+      }
+    }
+    throw new MissingRequiredFrontmatterError(
+      missingOrInvalid.join(", "),
+      missingOrInvalid,
+    );
+  }
+
+  return result.data;
 }
 
 export function formatMarkdownKnowledgeItem(item: ContextItem): string {
