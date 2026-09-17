@@ -71,7 +71,7 @@ export function initializeWorkspace(
   const manifest: WorkspaceManifest = {
     schemaVersion: 1,
     id: randomUUID(),
-    name: inputName?.trim() || basename(paths.root),
+    name: inputName?.trim() || basename(paths.root) || "workspace",
     createdAt: new Date().toISOString(),
     storage: { knowledge: "markdown", operations: "sqlite", search: "fts5" },
   };
