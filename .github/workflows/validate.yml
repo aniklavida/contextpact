@@ -198,7 +198,6 @@ jobs:
             echo "PASS: contextpact binary refused Node $(node -v) as expected."
           fi
 
-
   public-safety:
     runs-on: ubuntu-latest
     steps:

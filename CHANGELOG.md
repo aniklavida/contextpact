@@ -6,6 +6,13 @@ All notable changes will be documented here.
 
 ### Added
 
+- Cross-platform CI matrix covering macOS, Linux, and Windows runners for test execution and clean-install validation.
+- Clean package install verification installing packed tarballs into isolated directories outside repository checkouts and exercising installed binaries (`init`, `status`).
+- Native-module diagnostic logging in CI verifying `better-sqlite3` prebuilds and source compilation paths.
+- Enforced and tested Node.js engine floor (`>=22.12.0`) in CI and CLI entrypoint, proving refusal of unsupported Node versions.
+- Documentation of native-module prebuilds, fallback compiler toolchain prerequisites, and Windows SQLite WAL filesystem behavior.
+- Windows path normalization and empty root basename fallback handling in workspace layout.
+
 - Obsidian-compatible external vault editing without requiring Obsidian installation or a running daemon.
 - Reindexing and reconciliation of external edits made to document bodies and owned frontmatter fields into SQLite FTS5 search indexes.
 - Adoption of hand-added Markdown files with valid frontmatter into workspace storage and search indexes.
