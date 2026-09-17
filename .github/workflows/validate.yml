@@ -75,6 +75,18 @@ jobs:
           npm install --prefix "$STAGING" --no-save node-gyp@13
           rm -rf "$NPM_HOME/node_modules/node-gyp"
           cp -R "$STAGING/node_modules/node-gyp" "$NPM_HOME/node_modules/node-gyp"
+          # npm installs node-gyp's dependencies flat, as siblings rather than
+          # inside it, so copying the package alone leaves it unable to require
+          # undici and it dies at configure time. Nest the siblings under the
+          # copied package instead of merging them into npm's own tree, which
+          # would risk overwriting npm's copies with different versions.
+          mkdir -p "$NPM_HOME/node_modules/node-gyp/node_modules"
+          for dep in "$STAGING"/node_modules/*; do
+            name="$(basename "$dep")"
+            [ "$name" = "node-gyp" ] && continue
+            [ "$name" = ".package-lock.json" ] && continue
+            cp -R "$dep" "$NPM_HOME/node_modules/node-gyp/node_modules/$name"
+          done
           BUNDLED="$NPM_HOME/node_modules/node-gyp/bin/node-gyp.js"
           ACTUAL="$(node "$BUNDLED" --version)"
           echo "bundled node-gyp is now: $ACTUAL"
@@ -82,6 +94,12 @@ jobs:
             v1[3-9].*|v[2-9][0-9].*) echo "ok — this one knows Visual Studio 2026" ;;
             *) echo "the bundled node-gyp is still $ACTUAL; npm ci would fail on Visual Studio 2026, so stopping here rather than letting it fail later with a stack trace"; exit 1 ;;
           esac
+          # --version does not load node-gyp's dependencies, so it passed even
+          # when undici was missing and configure failed a step later. Load the
+          # module that needs them.
+          node -e "require('$NPM_HOME/node_modules/node-gyp/lib/download.js')" \
+            || { echo "node-gyp is installed but cannot load its own dependencies"; exit 1; }
+          echo "ok — and it can load its dependencies"
       - run: npm ci
       - name: Report better-sqlite3 native module binding in repository checkout
         shell: bash
@@ -185,6 +203,18 @@ jobs:
           npm install --prefix "$STAGING" --no-save node-gyp@13
           rm -rf "$NPM_HOME/node_modules/node-gyp"
           cp -R "$STAGING/node_modules/node-gyp" "$NPM_HOME/node_modules/node-gyp"
+          # npm installs node-gyp's dependencies flat, as siblings rather than
+          # inside it, so copying the package alone leaves it unable to require
+          # undici and it dies at configure time. Nest the siblings under the
+          # copied package instead of merging them into npm's own tree, which
+          # would risk overwriting npm's copies with different versions.
+          mkdir -p "$NPM_HOME/node_modules/node-gyp/node_modules"
+          for dep in "$STAGING"/node_modules/*; do
+            name="$(basename "$dep")"
+            [ "$name" = "node-gyp" ] && continue
+            [ "$name" = ".package-lock.json" ] && continue
+            cp -R "$dep" "$NPM_HOME/node_modules/node-gyp/node_modules/$name"
+          done
           BUNDLED="$NPM_HOME/node_modules/node-gyp/bin/node-gyp.js"
           ACTUAL="$(node "$BUNDLED" --version)"
           echo "bundled node-gyp is now: $ACTUAL"
@@ -192,6 +222,12 @@ jobs:
             v1[3-9].*|v[2-9][0-9].*) echo "ok — this one knows Visual Studio 2026" ;;
             *) echo "the bundled node-gyp is still $ACTUAL; npm ci would fail on Visual Studio 2026, so stopping here rather than letting it fail later with a stack trace"; exit 1 ;;
           esac
+          # --version does not load node-gyp's dependencies, so it passed even
+          # when undici was missing and configure failed a step later. Load the
+          # module that needs them.
+          node -e "require('$NPM_HOME/node_modules/node-gyp/lib/download.js')" \
+            || { echo "node-gyp is installed but cannot load its own dependencies"; exit 1; }
+          echo "ok — and it can load its dependencies"
       - name: Build package distribution
         run: |
           npm ci
