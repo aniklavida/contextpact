@@ -88,6 +88,8 @@ The same run also produced `EPERM: operation not permitted, rmdir` while npm cle
 
 **What is therefore claimed.** Nothing about Windows. The matrix cell stays failing and visible rather than pinned around, skipped, or quietly excluded until it looks green. A red cell that names its cause is worth more than a green one that was arranged.
 
+Tracked as [issue #17](https://github.com/aniklavida/contextpact/issues/17), which records what would settle the question: reproducing an install on a Windows host outside GitHub Actions.
+
 ## Observed on the first matrix run — the declared Node floor did not work
 
 The same run failed the `node-floor` job, and this one was not an environment
