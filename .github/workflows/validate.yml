@@ -39,13 +39,15 @@ jobs:
           # it on PATH, and the version actually resolved is printed, so that a
           # future failure says which node-gyp ran instead of leaving it to be
           # inferred from a stack trace.
-          npm install -g node-gyp@13
-          PREFIX="$(npm prefix -g)"
-          GYP_JS="$PREFIX/node_modules/node-gyp/bin/node-gyp.js"
-          echo "resolved: $GYP_JS"
-          node "$GYP_JS" --version
-          echo "npm_config_node_gyp=$GYP_JS" >> "$GITHUB_ENV"
-          echo "$PREFIX" >> "$GITHUB_PATH"
+          # Installing node-gyp globally and pointing npm_config_node_gyp at it
+          # did not work, and the diagnostic said why: the global copy was
+          # v13.0.2 and the build still reported "using node-gyp@11.5.0". npm
+          # runs install scripts with its own shim first on PATH, and that shim
+          # invokes npm's bundled node-gyp by a hardcoded path, so neither the
+          # config nor PATH is consulted. The bundled copy is the one to
+          # replace, which is what npm documents for exactly this situation.
+          npm explore npm -g -- npm install node-gyp@13
+          node "$(npm root -g)/npm/node_modules/node-gyp/bin/node-gyp.js" --version
       - run: npm ci
       - name: Report better-sqlite3 native module binding in repository checkout
         shell: bash
@@ -113,13 +115,15 @@ jobs:
           # it on PATH, and the version actually resolved is printed, so that a
           # future failure says which node-gyp ran instead of leaving it to be
           # inferred from a stack trace.
-          npm install -g node-gyp@13
-          PREFIX="$(npm prefix -g)"
-          GYP_JS="$PREFIX/node_modules/node-gyp/bin/node-gyp.js"
-          echo "resolved: $GYP_JS"
-          node "$GYP_JS" --version
-          echo "npm_config_node_gyp=$GYP_JS" >> "$GITHUB_ENV"
-          echo "$PREFIX" >> "$GITHUB_PATH"
+          # Installing node-gyp globally and pointing npm_config_node_gyp at it
+          # did not work, and the diagnostic said why: the global copy was
+          # v13.0.2 and the build still reported "using node-gyp@11.5.0". npm
+          # runs install scripts with its own shim first on PATH, and that shim
+          # invokes npm's bundled node-gyp by a hardcoded path, so neither the
+          # config nor PATH is consulted. The bundled copy is the one to
+          # replace, which is what npm documents for exactly this situation.
+          npm explore npm -g -- npm install node-gyp@13
+          node "$(npm root -g)/npm/node_modules/node-gyp/bin/node-gyp.js" --version
       - name: Build package distribution
         run: |
           npm ci
