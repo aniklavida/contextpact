@@ -107,7 +107,7 @@ See [the product specification](docs/SPEC.md), [architecture](docs/ARCHITECTURE.
 
 ## Development
 
-Requires Node.js 22.12 or newer.
+Requires Node.js 22.14 or newer.
 
 ```bash
 npm install

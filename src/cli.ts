@@ -938,15 +938,34 @@ export function createProgram(): Command {
   return program;
 }
 
+/**
+ * The lowest Node.js version ContextPact is known to run on.
+ *
+ * Not a guess and not simply "the current LTS": `better-sqlite3` 13.0.3
+ * declares `engines: node >=22`, but constructing a `Database` segfaults the
+ * process on 22.12.0 and 22.13.0. 22.14.0 is the first release where it
+ * works, so it is the first version we can honestly support. CI runs the whole
+ * suite on exactly this version; `tests/cli.test.ts` keeps this constant and
+ * `package.json` from drifting apart.
+ */
+export const NODE_FLOOR = { major: 22, minor: 14, patch: 0 } as const;
+
+export function nodeFloorString(): string {
+  return `${NODE_FLOOR.major}.${NODE_FLOOR.minor}.${NODE_FLOOR.patch}`;
+}
+
 export function assertSupportedNodeVersion(
   currentVersion = process.versions.node,
 ): void {
   const parts = currentVersion.split(".").map(Number);
   const major = parts[0] ?? 0;
   const minor = parts[1] ?? 0;
-  if (major < 22 || (major === 22 && minor < 12)) {
+  if (
+    major < NODE_FLOOR.major ||
+    (major === NODE_FLOOR.major && minor < NODE_FLOOR.minor)
+  ) {
     throw new Error(
-      `ContextPact requires Node.js >=22.12.0 (detected v${currentVersion}). Please upgrade Node.js.`,
+      `ContextPact requires Node.js >=${nodeFloorString()} (detected v${currentVersion}). Please upgrade Node.js.`,
     );
   }
 }

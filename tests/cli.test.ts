@@ -1,10 +1,15 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { assertSupportedNodeVersion, createProgram } from "../src/cli.js";
+import {
+  assertSupportedNodeVersion,
+  createProgram,
+  nodeFloorString,
+} from "../src/cli.js";
 import { initializeWorkspace } from "../src/index.js";
 
 describe("CLI surface commands over one core", () => {
@@ -458,17 +463,28 @@ describe("CLI surface commands over one core", () => {
   });
 
   it("enforces the declared Node engine floor", () => {
-    expect(() => assertSupportedNodeVersion("22.12.0")).not.toThrow();
+    expect(() => assertSupportedNodeVersion("22.14.0")).not.toThrow();
     expect(() => assertSupportedNodeVersion("22.16.0")).not.toThrow();
     expect(() => assertSupportedNodeVersion("23.0.0")).not.toThrow();
-    expect(() => assertSupportedNodeVersion("22.11.0")).toThrow(
-      /ContextPact requires Node\.js >=22\.12\.0/,
-    );
-    expect(() => assertSupportedNodeVersion("20.18.0")).toThrow(
-      /ContextPact requires Node\.js >=22\.12\.0/,
-    );
-    expect(() => assertSupportedNodeVersion("18.20.0")).toThrow(
-      /ContextPact requires Node\.js >=22\.12\.0/,
-    );
+    for (const below of ["22.13.0", "22.12.0", "20.18.0", "18.20.0"]) {
+      expect(() => assertSupportedNodeVersion(below)).toThrow(
+        /ContextPact requires Node\.js >=22\.14\.0/,
+      );
+    }
+  });
+
+  it("keeps the runtime floor and the package engines range in step", async () => {
+    const pkg = JSON.parse(
+      await readFile(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { engines?: { node?: string } };
+    expect(pkg.engines?.node).toBe(`>=${nodeFloorString()}`);
+  });
+
+  it("refuses the versions better-sqlite3 is known to crash on", () => {
+    // 22.12.0 and 22.13.0 satisfy better-sqlite3's own `>=22` claim, but
+    // constructing a Database segfaults on both. The floor exists for this
+    // reason; if it is ever lowered back, this fails.
+    expect(() => assertSupportedNodeVersion("22.12.0")).toThrow();
+    expect(() => assertSupportedNodeVersion("22.13.0")).toThrow();
   });
 });

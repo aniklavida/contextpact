@@ -59,7 +59,7 @@ ContextPact validates cross-platform packaging and clean installation in CI:
 1. **Matrix validation:** The test suite and clean installation runs across `ubuntu-latest`, `macos-latest`, and `windows-latest`.
 2. **Clean-install isolation:** A packed package tarball (`npm pack`) is installed into an empty directory outside the repository checkout, proving runtime operation without `devDependencies` or source files.
 3. **Native module diagnostics:** CI inspects `better-sqlite3` in both repository checkouts and clean installs, logging whether a prebuilt binary or source compilation was utilized.
-4. **Engine floor verification:** CI tests on the declared Node floor (`22.12.0`) and proves that versions below the floor (such as Node 20) are refused by engine-strict installation and CLI execution.
+4. **Engine floor verification:** CI runs the whole suite on the declared Node floor (`22.14.0`) and proves that versions below the floor (such as Node 20) are refused by engine-strict installation and CLI execution.
 
 ## Observed on the first matrix run — Windows install fails
 
@@ -87,3 +87,39 @@ The same run also produced `EPERM: operation not permitted, rmdir` while npm cle
 **What is not yet known.** Whether this is specific to the current GitHub runner image — Visual Studio 18 is newer than the node-gyp release in use can identify — or whether an ordinary Windows user hits it too. Those have different answers: the first is a CI environment problem, the second is a product one, and this document must not guess between them.
 
 **What is therefore claimed.** Nothing about Windows. The matrix cell stays failing and visible rather than pinned around, skipped, or quietly excluded until it looks green. A red cell that names its cause is worth more than a green one that was arranged.
+
+## Observed on the first matrix run — the declared Node floor did not work
+
+The same run failed the `node-floor` job, and this one was not an environment
+question. It was answered.
+
+The floor was `22.12.0`, chosen because it is the oldest Node 22 LTS. On that
+version `vitest` died with `Segmentation fault (core dumped)` before naming a
+single test file. It reproduces on macOS arm64 as well as the Linux runner, so
+it is the Node version, not the platform.
+
+Narrowed to one call:
+
+| Step                        | 22.12.0     | 22.13.0     | 22.14.0 | 22.16.0 |
+| --------------------------- | ----------- | ----------- | ------- | ------- |
+| `require("better-sqlite3")` | ok          | ok          | ok      | ok      |
+| `new Database(":memory:")`  | **SIGSEGV** | **SIGSEGV** | ok      | ok      |
+| `npm run check` (202 tests) | SIGSEGV     | SIGSEGV     | passes  | passes  |
+
+So it is not the test runner. Opening a database — the first thing any real
+command does — crashes the process. `contextpact --help` still works on
+22.12.0, which is exactly how a floor this wrong survives casual checking.
+
+`better-sqlite3` 13.0.3 declares `engines: { "node": ">=22" }`. That claim does
+not hold: 22.12.0 and 22.13.0 satisfy it and segfault.
+
+**What is therefore claimed.** The floor is now `22.14.0`, the oldest version
+the suite has actually been run on. It is declared in `package.json`, enforced
+at runtime by `assertSupportedNodeVersion`, and exercised by CI at exactly that
+version. A test asserts the constant and the `engines` range still agree, and
+another asserts 22.12.0 and 22.13.0 are refused, so lowering the floor back
+cannot pass quietly.
+
+This is the opposite decision from the Windows cell above, for the opposite
+reason: there the cause is unknown, so nothing is claimed; here the cause is
+known, so the wrong claim is corrected.
