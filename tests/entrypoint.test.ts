@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isEntrypointPath } from "../src/cli";
+import { isEntrypointPath } from "../src/cli.js";
 
 // Windows reports process.argv[1] with backslashes. A suffix check against
 // forward-slash paths therefore never matched there, so the CLI loaded, decided
