@@ -23,6 +23,38 @@ jobs:
           node-version: 22.x
           cache: npm
       - run: npm ci
+      - name: Report better-sqlite3 native module binding in repository checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const bdir = path.dirname(require.resolve("better-sqlite3/package.json"));
+            const bindingModule = require(path.join(bdir, "lib", "binding.js"));
+            const prebuild = bindingModule.getPrebuildPath();
+            const releaseNode = path.join(bdir, "build", "Release", "better_sqlite3.node");
+            const debugNode = path.join(bdir, "build", "Debug", "better_sqlite3.node");
+
+            console.log("=== better-sqlite3 Native Module Diagnostic ===");
+            console.log("Platform:", process.platform);
+            console.log("Architecture:", process.arch);
+            console.log("Node version:", process.version);
+            console.log("Prebuild candidate path:", prebuild);
+            console.log("Prebuild exists on disk:", prebuild ? fs.existsSync(prebuild) : false);
+            console.log("Release build exists on disk:", fs.existsSync(releaseNode));
+            console.log("Debug build exists on disk:", fs.existsSync(debugNode));
+
+            let active = "unknown";
+            if (prebuild && fs.existsSync(prebuild)) {
+              active = "prebuild (" + path.basename(prebuild) + ")";
+            } else if (fs.existsSync(releaseNode)) {
+              active = "source build (Release/better_sqlite3.node)";
+            } else if (fs.existsSync(debugNode)) {
+              active = "source build (Debug/better_sqlite3.node)";
+            }
+            console.log("Active binding path:", active);
+          '
       - run: npm run format:check
       - run: npm run check
       - run: npm pack --dry-run
@@ -70,6 +102,101 @@ jobs:
             if (!status.manifest) throw new Error('Manifest is missing');
             console.log('Clean-install binary validation succeeded for workspace at', status.root);
           " "$INIT_STATUS"
+      - name: Report better-sqlite3 native module binding in clean install
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLEAN_DIR="$RUNNER_TEMP/clean-install-run"
+          cd "$CLEAN_DIR"
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const bdir = path.dirname(require.resolve("better-sqlite3/package.json"));
+            const bindingModule = require(path.join(bdir, "lib", "binding.js"));
+            const prebuild = bindingModule.getPrebuildPath();
+            const releaseNode = path.join(bdir, "build", "Release", "better_sqlite3.node");
+            const debugNode = path.join(bdir, "build", "Debug", "better_sqlite3.node");
+
+            console.log("=== better-sqlite3 Clean Install Diagnostic ===");
+            console.log("Platform:", process.platform);
+            console.log("Architecture:", process.arch);
+            console.log("Node version:", process.version);
+            console.log("Prebuild candidate path:", prebuild);
+            console.log("Prebuild exists on disk:", prebuild ? fs.existsSync(prebuild) : false);
+            console.log("Release build exists on disk:", fs.existsSync(releaseNode));
+            console.log("Debug build exists on disk:", fs.existsSync(debugNode));
+
+            let active = "unknown";
+            if (prebuild && fs.existsSync(prebuild)) {
+              active = "prebuild (" + path.basename(prebuild) + ")";
+            } else if (fs.existsSync(releaseNode)) {
+              active = "source build (Release/better_sqlite3.node)";
+            } else if (fs.existsSync(debugNode)) {
+              active = "source build (Debug/better_sqlite3.node)";
+            }
+            console.log("Clean install active binding path:", active);
+          '
+
+  node-floor:
+    name: node-floor (22.12.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  node-floor-refusal:
+    name: node-refusal (below floor on Node 20)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build package tarball on Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Pack tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARBALL=$(npm pack)
+          mv "$TARBALL" "$RUNNER_TEMP/contextpact-refusal.tgz"
+      - name: Switch to Node 20 (below floor)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+      - name: Prove engine-strict install refuses Node 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          REFUSAL_DIR="$RUNNER_TEMP/engine-refusal-test"
+          mkdir -p "$REFUSAL_DIR"
+          cd "$REFUSAL_DIR"
+          npm init -y
+          echo "Verifying npm install with --engine-strict refuses Node $(node -v)..."
+          if npm install --engine-strict "$RUNNER_TEMP/contextpact-refusal.tgz"; then
+            echo "ERROR: npm install should have refused Node $(node -v)"
+            exit 1
+          else
+            echo "PASS: npm install with --engine-strict refused Node $(node -v) as expected."
+          fi
+      - name: Prove binary execution refuses Node 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Verifying contextpact binary refuses Node $(node -v)..."
+          if node dist/cli.js --help; then
+            echo "ERROR: contextpact binary should have refused Node $(node -v)"
+            exit 1
+          else
+            echo "PASS: contextpact binary refused Node $(node -v) as expected."
+          fi
 
 
   public-safety:
