@@ -953,14 +953,36 @@ export function assertSupportedNodeVersion(
 
 export const program = createProgram();
 
-const normalizedArgv1 = process.argv[1]?.replace(/\\/g, "/");
-const isEntry =
-  normalizedArgv1 &&
-  (process.argv[1] === fileURLToPath(import.meta.url) ||
-    normalizedArgv1.endsWith("/cli.ts") ||
-    normalizedArgv1.endsWith("/cli.js") ||
-    normalizedArgv1.endsWith("/contextpact") ||
-    normalizedArgv1.endsWith("/contextpact.cmd"));
+/**
+ * Decides whether this module was invoked as the command rather than imported.
+ *
+ * Windows reports `process.argv[1]` with backslashes — `\\dist\\cli.js`,
+ * `\\node_modules\\.bin\\contextpact` — so a suffix check against
+ * forward-slash paths never matched there and the CLI exited silently, doing
+ * nothing and reporting nothing. Separators are normalised before comparing.
+ *
+ * Exported so the Windows shapes can be tested on any platform; the check
+ * itself cannot be, because it reads the real `process.argv`.
+ */
+export function isEntrypointPath(
+  argv1: string | undefined,
+  moduleUrlPath: string,
+): boolean {
+  if (!argv1) return false;
+  const normalized = argv1.replace(/\\/g, "/");
+  return (
+    argv1 === moduleUrlPath ||
+    normalized.endsWith("/cli.ts") ||
+    normalized.endsWith("/cli.js") ||
+    normalized.endsWith("/contextpact") ||
+    normalized.endsWith("/contextpact.cmd")
+  );
+}
+
+const isEntry = isEntrypointPath(
+  process.argv[1],
+  fileURLToPath(import.meta.url),
+);
 
 if (isEntry) {
   try {
