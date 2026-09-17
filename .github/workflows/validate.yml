@@ -32,8 +32,20 @@ jobs:
           # Studio 18 (2026); the node-gyp bundled with npm searches only for
           # 2019 and 2022, reports "unknown version", and fails npm ci before
           # any test runs. node-gyp 12.2.0 was the first to search for 2026.
+          #
+          # Setting npm_config_node_gyp alone was not enough: npm put its own
+          # bundled shim first and the build still reported node-gyp@11.5.0.
+          # So the override is set AND the global bin directory is put ahead of
+          # it on PATH, and the version actually resolved is printed, so that a
+          # future failure says which node-gyp ran instead of leaving it to be
+          # inferred from a stack trace.
           npm install -g node-gyp@13
-          echo "npm_config_node_gyp=$(npm prefix -g)/node_modules/node-gyp/bin/node-gyp.js" >> "$GITHUB_ENV"
+          PREFIX="$(npm prefix -g)"
+          GYP_JS="$PREFIX/node_modules/node-gyp/bin/node-gyp.js"
+          echo "resolved: $GYP_JS"
+          node "$GYP_JS" --version
+          echo "npm_config_node_gyp=$GYP_JS" >> "$GITHUB_ENV"
+          echo "$PREFIX" >> "$GITHUB_PATH"
       - run: npm ci
       - name: Report better-sqlite3 native module binding in repository checkout
         shell: bash
@@ -94,8 +106,20 @@ jobs:
           # Studio 18 (2026); the node-gyp bundled with npm searches only for
           # 2019 and 2022, reports "unknown version", and fails npm ci before
           # any test runs. node-gyp 12.2.0 was the first to search for 2026.
+          #
+          # Setting npm_config_node_gyp alone was not enough: npm put its own
+          # bundled shim first and the build still reported node-gyp@11.5.0.
+          # So the override is set AND the global bin directory is put ahead of
+          # it on PATH, and the version actually resolved is printed, so that a
+          # future failure says which node-gyp ran instead of leaving it to be
+          # inferred from a stack trace.
           npm install -g node-gyp@13
-          echo "npm_config_node_gyp=$(npm prefix -g)/node_modules/node-gyp/bin/node-gyp.js" >> "$GITHUB_ENV"
+          PREFIX="$(npm prefix -g)"
+          GYP_JS="$PREFIX/node_modules/node-gyp/bin/node-gyp.js"
+          echo "resolved: $GYP_JS"
+          node "$GYP_JS" --version
+          echo "npm_config_node_gyp=$GYP_JS" >> "$GITHUB_ENV"
+          echo "$PREFIX" >> "$GITHUB_PATH"
       - name: Build package distribution
         run: |
           npm ci
