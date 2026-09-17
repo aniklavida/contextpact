@@ -938,15 +938,36 @@ export function createProgram(): Command {
   return program;
 }
 
+export function assertSupportedNodeVersion(
+  currentVersion = process.versions.node,
+): void {
+  const parts = currentVersion.split(".").map(Number);
+  const major = parts[0] ?? 0;
+  const minor = parts[1] ?? 0;
+  if (major < 22 || (major === 22 && minor < 12)) {
+    throw new Error(
+      `ContextPact requires Node.js >=22.12.0 (detected v${currentVersion}). Please upgrade Node.js.`,
+    );
+  }
+}
+
 export const program = createProgram();
 
+const normalizedArgv1 = process.argv[1]?.replace(/\\/g, "/");
 const isEntry =
-  process.argv[1] &&
+  normalizedArgv1 &&
   (process.argv[1] === fileURLToPath(import.meta.url) ||
-    process.argv[1].endsWith("/cli.ts") ||
-    process.argv[1].endsWith("/cli.js") ||
-    process.argv[1].endsWith("/contextpact"));
+    normalizedArgv1.endsWith("/cli.ts") ||
+    normalizedArgv1.endsWith("/cli.js") ||
+    normalizedArgv1.endsWith("/contextpact") ||
+    normalizedArgv1.endsWith("/contextpact.cmd"));
 
 if (isEntry) {
+  try {
+    assertSupportedNodeVersion();
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`);
+    process.exit(1);
+  }
   void program.parseAsync();
 }

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createProgram } from "../src/cli.js";
+import { assertSupportedNodeVersion, createProgram } from "../src/cli.js";
 import { initializeWorkspace } from "../src/index.js";
 
 describe("CLI surface commands over one core", () => {
@@ -455,5 +455,20 @@ describe("CLI surface commands over one core", () => {
     const doctorOutput = JSON.parse(doctorResult.stdout);
     expect(doctorOutput.healthy).toBe(true);
     expect(doctorOutput.rebuiltDatabase).toBe(false);
+  });
+
+  it("enforces the declared Node engine floor", () => {
+    expect(() => assertSupportedNodeVersion("22.12.0")).not.toThrow();
+    expect(() => assertSupportedNodeVersion("22.16.0")).not.toThrow();
+    expect(() => assertSupportedNodeVersion("23.0.0")).not.toThrow();
+    expect(() => assertSupportedNodeVersion("22.11.0")).toThrow(
+      /ContextPact requires Node\.js >=22\.12\.0/,
+    );
+    expect(() => assertSupportedNodeVersion("20.18.0")).toThrow(
+      /ContextPact requires Node\.js >=22\.12\.0/,
+    );
+    expect(() => assertSupportedNodeVersion("18.20.0")).toThrow(
+      /ContextPact requires Node\.js >=22\.12\.0/,
+    );
   });
 });
