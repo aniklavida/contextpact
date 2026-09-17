@@ -46,8 +46,34 @@ jobs:
           # invokes npm's bundled node-gyp by a hardcoded path, so neither the
           # config nor PATH is consulted. The bundled copy is the one to
           # replace, which is what npm documents for exactly this situation.
-          npm explore npm -g -- npm install node-gyp@13
-          node "$(npm root -g)/npm/node_modules/node-gyp/bin/node-gyp.js" --version
+          # Third attempt. The first two failed for reasons the diagnostics
+          # then explained, and both are recorded so the next person does not
+          # repeat them: setting npm_config_node_gyp is ignored because npm's
+          # own shim calls its bundled copy by a hardcoded path, and
+          # `npm explore npm -g` fails because npm is not installed into the
+          # global prefix at all — it ships beside node in the tool cache.
+          #
+          # So find npm where it actually lives, replace the node-gyp inside
+          # it, and then verify rather than assume.
+          NPM_BIN_DIR="$(dirname "$(command -v npm)")"
+          NPM_HOME=""
+          for candidate in "$NPM_BIN_DIR/node_modules/npm" "$NPM_BIN_DIR/../lib/node_modules/npm"; do
+            if [ -f "$candidate/package.json" ]; then NPM_HOME="$candidate"; break; fi
+          done
+          if [ -z "$NPM_HOME" ]; then
+            echo "npm is not in either layout under $NPM_BIN_DIR; listing it so the next attempt does not have to guess"
+            ls -la "$NPM_BIN_DIR"
+            exit 1
+          fi
+          echo "npm home: $NPM_HOME"
+          ( cd "$NPM_HOME" && npm install --no-save node-gyp@13 )
+          BUNDLED="$NPM_HOME/node_modules/node-gyp/bin/node-gyp.js"
+          ACTUAL="$(node "$BUNDLED" --version)"
+          echo "bundled node-gyp is now: $ACTUAL"
+          case "$ACTUAL" in
+            v1[3-9].*|v[2-9][0-9].*) echo "ok — this one knows Visual Studio 2026" ;;
+            *) echo "the bundled node-gyp is still $ACTUAL; npm ci would fail on Visual Studio 2026, so stopping here rather than letting it fail later with a stack trace"; exit 1 ;;
+          esac
       - run: npm ci
       - name: Report better-sqlite3 native module binding in repository checkout
         shell: bash
@@ -122,8 +148,34 @@ jobs:
           # invokes npm's bundled node-gyp by a hardcoded path, so neither the
           # config nor PATH is consulted. The bundled copy is the one to
           # replace, which is what npm documents for exactly this situation.
-          npm explore npm -g -- npm install node-gyp@13
-          node "$(npm root -g)/npm/node_modules/node-gyp/bin/node-gyp.js" --version
+          # Third attempt. The first two failed for reasons the diagnostics
+          # then explained, and both are recorded so the next person does not
+          # repeat them: setting npm_config_node_gyp is ignored because npm's
+          # own shim calls its bundled copy by a hardcoded path, and
+          # `npm explore npm -g` fails because npm is not installed into the
+          # global prefix at all — it ships beside node in the tool cache.
+          #
+          # So find npm where it actually lives, replace the node-gyp inside
+          # it, and then verify rather than assume.
+          NPM_BIN_DIR="$(dirname "$(command -v npm)")"
+          NPM_HOME=""
+          for candidate in "$NPM_BIN_DIR/node_modules/npm" "$NPM_BIN_DIR/../lib/node_modules/npm"; do
+            if [ -f "$candidate/package.json" ]; then NPM_HOME="$candidate"; break; fi
+          done
+          if [ -z "$NPM_HOME" ]; then
+            echo "npm is not in either layout under $NPM_BIN_DIR; listing it so the next attempt does not have to guess"
+            ls -la "$NPM_BIN_DIR"
+            exit 1
+          fi
+          echo "npm home: $NPM_HOME"
+          ( cd "$NPM_HOME" && npm install --no-save node-gyp@13 )
+          BUNDLED="$NPM_HOME/node_modules/node-gyp/bin/node-gyp.js"
+          ACTUAL="$(node "$BUNDLED" --version)"
+          echo "bundled node-gyp is now: $ACTUAL"
+          case "$ACTUAL" in
+            v1[3-9].*|v[2-9][0-9].*) echo "ok — this one knows Visual Studio 2026" ;;
+            *) echo "the bundled node-gyp is still $ACTUAL; npm ci would fail on Visual Studio 2026, so stopping here rather than letting it fail later with a stack trace"; exit 1 ;;
+          esac
       - name: Build package distribution
         run: |
           npm ci
