@@ -66,7 +66,15 @@ jobs:
             exit 1
           fi
           echo "npm home: $NPM_HOME"
-          ( cd "$NPM_HOME" && npm install --no-save node-gyp@13 )
+          # Do not run npm install inside npm's own package directory. npm
+          # then tries to install npm's devDependencies, one of which
+          # (@npmcli/docs) is not published, and the step dies on a 404 that
+          # has nothing to do with node-gyp. Install somewhere harmless and
+          # copy the result into place instead.
+          STAGING="$(mktemp -d)"
+          npm install --prefix "$STAGING" --no-save node-gyp@13
+          rm -rf "$NPM_HOME/node_modules/node-gyp"
+          cp -R "$STAGING/node_modules/node-gyp" "$NPM_HOME/node_modules/node-gyp"
           BUNDLED="$NPM_HOME/node_modules/node-gyp/bin/node-gyp.js"
           ACTUAL="$(node "$BUNDLED" --version)"
           echo "bundled node-gyp is now: $ACTUAL"
@@ -168,7 +176,15 @@ jobs:
             exit 1
           fi
           echo "npm home: $NPM_HOME"
-          ( cd "$NPM_HOME" && npm install --no-save node-gyp@13 )
+          # Do not run npm install inside npm's own package directory. npm
+          # then tries to install npm's devDependencies, one of which
+          # (@npmcli/docs) is not published, and the step dies on a 404 that
+          # has nothing to do with node-gyp. Install somewhere harmless and
+          # copy the result into place instead.
+          STAGING="$(mktemp -d)"
+          npm install --prefix "$STAGING" --no-save node-gyp@13
+          rm -rf "$NPM_HOME/node_modules/node-gyp"
+          cp -R "$STAGING/node_modules/node-gyp" "$NPM_HOME/node_modules/node-gyp"
           BUNDLED="$NPM_HOME/node_modules/node-gyp/bin/node-gyp.js"
           ACTUAL="$(node "$BUNDLED" --version)"
           echo "bundled node-gyp is now: $ACTUAL"
