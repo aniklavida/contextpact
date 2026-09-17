@@ -22,6 +22,18 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
+      - name: Use a node-gyp that recognises Visual Studio 2026
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # better-sqlite3 publishes no prebuilt binaries, so every platform
+          # compiles from source. The Windows runner image now ships Visual
+          # Studio 18 (2026); the node-gyp bundled with npm searches only for
+          # 2019 and 2022, reports "unknown version", and fails npm ci before
+          # any test runs. node-gyp 12.2.0 was the first to search for 2026.
+          npm install -g node-gyp@13
+          echo "npm_config_node_gyp=$(npm prefix -g)/node_modules/node-gyp/bin/node-gyp.js" >> "$GITHUB_ENV"
       - run: npm ci
       - name: Report better-sqlite3 native module binding in repository checkout
         shell: bash
@@ -72,6 +84,18 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
+      - name: Use a node-gyp that recognises Visual Studio 2026
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # better-sqlite3 publishes no prebuilt binaries, so every platform
+          # compiles from source. The Windows runner image now ships Visual
+          # Studio 18 (2026); the node-gyp bundled with npm searches only for
+          # 2019 and 2022, reports "unknown version", and fails npm ci before
+          # any test runs. node-gyp 12.2.0 was the first to search for 2026.
+          npm install -g node-gyp@13
+          echo "npm_config_node_gyp=$(npm prefix -g)/node_modules/node-gyp/bin/node-gyp.js" >> "$GITHUB_ENV"
       - name: Build package distribution
         run: |
           npm ci
