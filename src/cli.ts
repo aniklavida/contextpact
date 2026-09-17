@@ -938,15 +938,77 @@ export function createProgram(): Command {
   return program;
 }
 
+/**
+ * The lowest Node.js version ContextPact is known to run on.
+ *
+ * Not a guess and not simply "the current LTS": `better-sqlite3` 13.0.3
+ * declares `engines: node >=22`, but constructing a `Database` segfaults the
+ * process on 22.12.0 and 22.13.0. 22.14.0 is the first release where it
+ * works, so it is the first version we can honestly support. CI runs the whole
+ * suite on exactly this version; `tests/cli.test.ts` keeps this constant and
+ * `package.json` from drifting apart.
+ */
+export const NODE_FLOOR = { major: 22, minor: 14, patch: 0 } as const;
+
+export function nodeFloorString(): string {
+  return `${NODE_FLOOR.major}.${NODE_FLOOR.minor}.${NODE_FLOOR.patch}`;
+}
+
+export function assertSupportedNodeVersion(
+  currentVersion = process.versions.node,
+): void {
+  const parts = currentVersion.split(".").map(Number);
+  const major = parts[0] ?? 0;
+  const minor = parts[1] ?? 0;
+  if (
+    major < NODE_FLOOR.major ||
+    (major === NODE_FLOOR.major && minor < NODE_FLOOR.minor)
+  ) {
+    throw new Error(
+      `ContextPact requires Node.js >=${nodeFloorString()} (detected v${currentVersion}). Please upgrade Node.js.`,
+    );
+  }
+}
+
 export const program = createProgram();
 
-const isEntry =
-  process.argv[1] &&
-  (process.argv[1] === fileURLToPath(import.meta.url) ||
-    process.argv[1].endsWith("/cli.ts") ||
-    process.argv[1].endsWith("/cli.js") ||
-    process.argv[1].endsWith("/contextpact"));
+/**
+ * Decides whether this module was invoked as the command rather than imported.
+ *
+ * Windows reports `process.argv[1]` with backslashes — `\\dist\\cli.js`,
+ * `\\node_modules\\.bin\\contextpact` — so a suffix check against
+ * forward-slash paths never matched there and the CLI exited silently, doing
+ * nothing and reporting nothing. Separators are normalised before comparing.
+ *
+ * Exported so the Windows shapes can be tested on any platform; the check
+ * itself cannot be, because it reads the real `process.argv`.
+ */
+export function isEntrypointPath(
+  argv1: string | undefined,
+  moduleUrlPath: string,
+): boolean {
+  if (!argv1) return false;
+  const normalized = argv1.replace(/\\/g, "/");
+  return (
+    argv1 === moduleUrlPath ||
+    normalized.endsWith("/cli.ts") ||
+    normalized.endsWith("/cli.js") ||
+    normalized.endsWith("/contextpact") ||
+    normalized.endsWith("/contextpact.cmd")
+  );
+}
+
+const isEntry = isEntrypointPath(
+  process.argv[1],
+  fileURLToPath(import.meta.url),
+);
 
 if (isEntry) {
+  try {
+    assertSupportedNodeVersion();
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`);
+    process.exit(1);
+  }
   void program.parseAsync();
 }

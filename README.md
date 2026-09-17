@@ -103,11 +103,11 @@ Ten CLI maintenance and runner commands have no MCP counterpart:
 - CLI and MCP call the same transport-independent core.
 - Obsidian may edit the Markdown layer but is never required.
 
-See [the product specification](docs/SPEC.md), [architecture](docs/ARCHITECTURE.md), [roadmap](docs/ROADMAP.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+See [the product specification](docs/SPEC.md), [architecture](docs/ARCHITECTURE.md), [roadmap](docs/ROADMAP.md), [native modules](docs/NATIVE_MODULES.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Development
 
-Requires Node.js 22.12 or newer.
+Requires Node.js 22.14 or newer.
 
 ```bash
 npm install
