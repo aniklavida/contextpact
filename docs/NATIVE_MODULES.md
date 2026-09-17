@@ -60,3 +60,30 @@ ContextPact validates cross-platform packaging and clean installation in CI:
 2. **Clean-install isolation:** A packed package tarball (`npm pack`) is installed into an empty directory outside the repository checkout, proving runtime operation without `devDependencies` or source files.
 3. **Native module diagnostics:** CI inspects `better-sqlite3` in both repository checkouts and clean installs, logging whether a prebuilt binary or source compilation was utilized.
 4. **Engine floor verification:** CI tests on the declared Node floor (`22.12.0`) and proves that versions below the floor (such as Node 20) are refused by engine-strict installation and CLI execution.
+
+## Observed on the first matrix run — Windows install fails
+
+The first run of the cross-platform matrix failed to install on `windows-latest`, and the detail matters because it is not the failure this document anticipated.
+
+**`better-sqlite3` 13.0.3 ships its prebuilt binaries inside the npm tarball**, not as GitHub release assets. The installed tree contains all eight, `win32-x64.node` among them:
+
+```
+prebuilds/darwin-arm64.node   prebuilds/linuxmusl-arm64.node
+prebuilds/darwin-x64.node     prebuilds/linuxmusl-x64.node
+prebuilds/linux-arm64.node    prebuilds/win32-arm64.node
+prebuilds/linux-x64.node      prebuilds/win32-x64.node
+```
+
+So the Windows binary was present and no compilation should have been needed. `npm ci` invoked `node-gyp rebuild` anyway, and it failed — not for want of a compiler, but because node-gyp did not recognise the Visual Studio on the runner image:
+
+```
+gyp ERR! find VS unknown version "undefined" found at
+         "C:\Program Files\Microsoft Visual Studio\18\Enterprise"
+gyp ERR! find VS could not find a version of Visual Studio 2017 or newer to use
+```
+
+The same run also produced `EPERM: operation not permitted, rmdir` while npm cleaned up `node_modules`, which is the Windows file-locking behaviour described above, observed rather than predicted.
+
+**What is not yet known.** Whether this is specific to the current GitHub runner image — Visual Studio 18 is newer than the node-gyp release in use can identify — or whether an ordinary Windows user hits it too. Those have different answers: the first is a CI environment problem, the second is a product one, and this document must not guess between them.
+
+**What is therefore claimed.** Nothing about Windows. The matrix cell stays failing and visible rather than pinned around, skipped, or quietly excluded until it looks green. A red cell that names its cause is worth more than a green one that was arranged.
