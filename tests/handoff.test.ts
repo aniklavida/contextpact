@@ -600,6 +600,11 @@ Do nothing
       });
     }
 
+    // Five real `node` child processes, not a single-process unit test. It runs
+    // in about a second locally and exceeded vitest's default 5s deadline on a
+    // loaded CI runner while passing on two others in the same matrix. The
+    // deadline is raised to match what the test actually does; a genuine hang
+    // still fails it.
     it("Agent A works, hands off and exits; Agent B resumes from the handoff ALONE and finishes the task without sharing process state", async () => {
       // 1. Create a task in the workspace
       const task = service.createTask({
@@ -714,6 +719,6 @@ Do nothing
         (e) => e.event_type === "handoff.resumed",
       );
       expect(handoffResumedEvent?.actor).toBe("agent-beta");
-    });
+    }, 30_000);
   });
 });
