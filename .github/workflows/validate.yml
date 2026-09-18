@@ -97,8 +97,10 @@ jobs:
           # --version does not load node-gyp's dependencies, so it passed even
           # when undici was missing and configure failed a step later. Load the
           # module that needs them.
-          node -e "require('$NPM_HOME/node_modules/node-gyp/lib/download.js')" \
-            || { echo "node-gyp is installed but cannot load its own dependencies"; exit 1; }
+          WIN_NPM_HOME="$(cygpath -m "$NPM_HOME")"
+          echo "windows native npm home for require: $WIN_NPM_HOME"
+          node -e "try { require('$WIN_NPM_HOME/node_modules/node-gyp/lib/download.js'); } catch (err) { console.error('node-gyp verification failed. Real error:', err); process.exit(1); }" \
+            || { echo "node-gyp is installed but verification failed (see real error above)"; exit 1; }
           echo "ok — and it can load its dependencies"
       - run: npm ci
       - name: Report better-sqlite3 native module binding in repository checkout
@@ -225,8 +227,10 @@ jobs:
           # --version does not load node-gyp's dependencies, so it passed even
           # when undici was missing and configure failed a step later. Load the
           # module that needs them.
-          node -e "require('$NPM_HOME/node_modules/node-gyp/lib/download.js')" \
-            || { echo "node-gyp is installed but cannot load its own dependencies"; exit 1; }
+          WIN_NPM_HOME="$(cygpath -m "$NPM_HOME")"
+          echo "windows native npm home for require: $WIN_NPM_HOME"
+          node -e "try { require('$WIN_NPM_HOME/node_modules/node-gyp/lib/download.js'); } catch (err) { console.error('node-gyp verification failed. Real error:', err); process.exit(1); }" \
+            || { echo "node-gyp is installed but verification failed (see real error above)"; exit 1; }
           echo "ok — and it can load its dependencies"
       - name: Build package distribution
         run: |
