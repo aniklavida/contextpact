@@ -31,10 +31,26 @@ export function createServer(options?: McpServerOptions): McpServer {
   const server = new McpServer({ name: "contextpact", version: "0.0.0" });
   const serverActor: ActorContext = options?.actor ?? DEFAULT_MCP_ACTOR;
 
+  const serviceCache = new Map<string, ContextService>();
+
   function getService(workspace?: string): ContextService {
     const root = workspace ?? options?.workspaceRoot ?? process.cwd();
-    return new ContextService(root);
+    let service = serviceCache.get(root);
+    if (!service) {
+      service = new ContextService(root);
+      serviceCache.set(root, service);
+    }
+    return service;
   }
+
+  const originalClose = server.close.bind(server);
+  server.close = async () => {
+    for (const service of serviceCache.values()) {
+      service.close();
+    }
+    serviceCache.clear();
+    await originalClose();
+  };
 
   server.registerTool(
     "context_status",
@@ -214,19 +230,15 @@ export function createServer(options?: McpServerOptions): McpServer {
     },
     async ({ workspace, query, scope, allowGlobal, limit }) => {
       const service = getService(workspace);
-      try {
-        const results = service.search(query, {
-          scope,
-          allowGlobal,
-          limit,
-        });
-        return {
-          content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-          structuredContent: { results },
-        };
-      } finally {
-        service.close();
-      }
+      const results = service.search(query, {
+        scope,
+        allowGlobal,
+        limit,
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+        structuredContent: { results },
+      };
     },
   );
 
@@ -255,23 +267,19 @@ export function createServer(options?: McpServerOptions): McpServer {
       allowGlobal,
     }) => {
       const service = getService(workspace);
-      try {
-        const pack = service.buildPack({
-          query,
-          scope,
-          taskId,
-          sessionId,
-          maxTokens,
-          allowGlobal,
-          client: serverActor,
-        });
-        return {
-          content: [{ type: "text", text: JSON.stringify(pack, null, 2) }],
-          structuredContent: { ...pack },
-        };
-      } finally {
-        service.close();
-      }
+      const pack = service.buildPack({
+        query,
+        scope,
+        taskId,
+        sessionId,
+        maxTokens,
+        allowGlobal,
+        client: serverActor,
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(pack, null, 2) }],
+        structuredContent: { ...pack },
+      };
     },
   );
 

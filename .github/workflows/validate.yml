@@ -22,6 +22,86 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
+      - name: Use a node-gyp that recognises Visual Studio 2026
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # better-sqlite3 publishes no prebuilt binaries, so every platform
+          # compiles from source. The Windows runner image now ships Visual
+          # Studio 18 (2026); the node-gyp bundled with npm searches only for
+          # 2019 and 2022, reports "unknown version", and fails npm ci before
+          # any test runs. node-gyp 12.2.0 was the first to search for 2026.
+          #
+          # Setting npm_config_node_gyp alone was not enough: npm put its own
+          # bundled shim first and the build still reported node-gyp@11.5.0.
+          # So the override is set AND the global bin directory is put ahead of
+          # it on PATH, and the version actually resolved is printed, so that a
+          # future failure says which node-gyp ran instead of leaving it to be
+          # inferred from a stack trace.
+          # Installing node-gyp globally and pointing npm_config_node_gyp at it
+          # did not work, and the diagnostic said why: the global copy was
+          # v13.0.2 and the build still reported "using node-gyp@11.5.0". npm
+          # runs install scripts with its own shim first on PATH, and that shim
+          # invokes npm's bundled node-gyp by a hardcoded path, so neither the
+          # config nor PATH is consulted. The bundled copy is the one to
+          # replace, which is what npm documents for exactly this situation.
+          # Third attempt. The first two failed for reasons the diagnostics
+          # then explained, and both are recorded so the next person does not
+          # repeat them: setting npm_config_node_gyp is ignored because npm's
+          # own shim calls its bundled copy by a hardcoded path, and
+          # `npm explore npm -g` fails because npm is not installed into the
+          # global prefix at all — it ships beside node in the tool cache.
+          #
+          # So find npm where it actually lives, replace the node-gyp inside
+          # it, and then verify rather than assume.
+          NPM_BIN_DIR="$(dirname "$(command -v npm)")"
+          NPM_HOME=""
+          for candidate in "$NPM_BIN_DIR/node_modules/npm" "$NPM_BIN_DIR/../lib/node_modules/npm"; do
+            if [ -f "$candidate/package.json" ]; then NPM_HOME="$candidate"; break; fi
+          done
+          if [ -z "$NPM_HOME" ]; then
+            echo "npm is not in either layout under $NPM_BIN_DIR; listing it so the next attempt does not have to guess"
+            ls -la "$NPM_BIN_DIR"
+            exit 1
+          fi
+          echo "npm home: $NPM_HOME"
+          # Do not run npm install inside npm's own package directory. npm
+          # then tries to install npm's devDependencies, one of which
+          # (@npmcli/docs) is not published, and the step dies on a 404 that
+          # has nothing to do with node-gyp. Install somewhere harmless and
+          # copy the result into place instead.
+          STAGING="$(mktemp -d)"
+          npm install --prefix "$STAGING" --no-save node-gyp@13
+          rm -rf "$NPM_HOME/node_modules/node-gyp"
+          cp -R "$STAGING/node_modules/node-gyp" "$NPM_HOME/node_modules/node-gyp"
+          # npm installs node-gyp's dependencies flat, as siblings rather than
+          # inside it, so copying the package alone leaves it unable to require
+          # undici and it dies at configure time. Nest the siblings under the
+          # copied package instead of merging them into npm's own tree, which
+          # would risk overwriting npm's copies with different versions.
+          mkdir -p "$NPM_HOME/node_modules/node-gyp/node_modules"
+          for dep in "$STAGING"/node_modules/*; do
+            name="$(basename "$dep")"
+            [ "$name" = "node-gyp" ] && continue
+            [ "$name" = ".package-lock.json" ] && continue
+            cp -R "$dep" "$NPM_HOME/node_modules/node-gyp/node_modules/$name"
+          done
+          BUNDLED="$NPM_HOME/node_modules/node-gyp/bin/node-gyp.js"
+          ACTUAL="$(node "$BUNDLED" --version)"
+          echo "bundled node-gyp is now: $ACTUAL"
+          case "$ACTUAL" in
+            v1[3-9].*|v[2-9][0-9].*) echo "ok — this one knows Visual Studio 2026" ;;
+            *) echo "the bundled node-gyp is still $ACTUAL; npm ci would fail on Visual Studio 2026, so stopping here rather than letting it fail later with a stack trace"; exit 1 ;;
+          esac
+          # --version does not load node-gyp's dependencies, so it passed even
+          # when undici was missing and configure failed a step later. Load the
+          # module that needs them.
+          WIN_NPM_HOME="$(cygpath -m "$NPM_HOME")"
+          echo "windows native npm home for require: $WIN_NPM_HOME"
+          node -e "try { require('$WIN_NPM_HOME/node_modules/node-gyp/lib/download.js'); } catch (err) { console.error('node-gyp verification failed. Real error:', err); process.exit(1); }" \
+            || { echo "node-gyp is installed but verification failed (see real error above)"; exit 1; }
+          echo "ok — and it can load its dependencies"
       - run: npm ci
       - name: Report better-sqlite3 native module binding in repository checkout
         shell: bash
@@ -72,6 +152,86 @@ jobs:
         with:
           node-version: 22.x
           cache: npm
+      - name: Use a node-gyp that recognises Visual Studio 2026
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # better-sqlite3 publishes no prebuilt binaries, so every platform
+          # compiles from source. The Windows runner image now ships Visual
+          # Studio 18 (2026); the node-gyp bundled with npm searches only for
+          # 2019 and 2022, reports "unknown version", and fails npm ci before
+          # any test runs. node-gyp 12.2.0 was the first to search for 2026.
+          #
+          # Setting npm_config_node_gyp alone was not enough: npm put its own
+          # bundled shim first and the build still reported node-gyp@11.5.0.
+          # So the override is set AND the global bin directory is put ahead of
+          # it on PATH, and the version actually resolved is printed, so that a
+          # future failure says which node-gyp ran instead of leaving it to be
+          # inferred from a stack trace.
+          # Installing node-gyp globally and pointing npm_config_node_gyp at it
+          # did not work, and the diagnostic said why: the global copy was
+          # v13.0.2 and the build still reported "using node-gyp@11.5.0". npm
+          # runs install scripts with its own shim first on PATH, and that shim
+          # invokes npm's bundled node-gyp by a hardcoded path, so neither the
+          # config nor PATH is consulted. The bundled copy is the one to
+          # replace, which is what npm documents for exactly this situation.
+          # Third attempt. The first two failed for reasons the diagnostics
+          # then explained, and both are recorded so the next person does not
+          # repeat them: setting npm_config_node_gyp is ignored because npm's
+          # own shim calls its bundled copy by a hardcoded path, and
+          # `npm explore npm -g` fails because npm is not installed into the
+          # global prefix at all — it ships beside node in the tool cache.
+          #
+          # So find npm where it actually lives, replace the node-gyp inside
+          # it, and then verify rather than assume.
+          NPM_BIN_DIR="$(dirname "$(command -v npm)")"
+          NPM_HOME=""
+          for candidate in "$NPM_BIN_DIR/node_modules/npm" "$NPM_BIN_DIR/../lib/node_modules/npm"; do
+            if [ -f "$candidate/package.json" ]; then NPM_HOME="$candidate"; break; fi
+          done
+          if [ -z "$NPM_HOME" ]; then
+            echo "npm is not in either layout under $NPM_BIN_DIR; listing it so the next attempt does not have to guess"
+            ls -la "$NPM_BIN_DIR"
+            exit 1
+          fi
+          echo "npm home: $NPM_HOME"
+          # Do not run npm install inside npm's own package directory. npm
+          # then tries to install npm's devDependencies, one of which
+          # (@npmcli/docs) is not published, and the step dies on a 404 that
+          # has nothing to do with node-gyp. Install somewhere harmless and
+          # copy the result into place instead.
+          STAGING="$(mktemp -d)"
+          npm install --prefix "$STAGING" --no-save node-gyp@13
+          rm -rf "$NPM_HOME/node_modules/node-gyp"
+          cp -R "$STAGING/node_modules/node-gyp" "$NPM_HOME/node_modules/node-gyp"
+          # npm installs node-gyp's dependencies flat, as siblings rather than
+          # inside it, so copying the package alone leaves it unable to require
+          # undici and it dies at configure time. Nest the siblings under the
+          # copied package instead of merging them into npm's own tree, which
+          # would risk overwriting npm's copies with different versions.
+          mkdir -p "$NPM_HOME/node_modules/node-gyp/node_modules"
+          for dep in "$STAGING"/node_modules/*; do
+            name="$(basename "$dep")"
+            [ "$name" = "node-gyp" ] && continue
+            [ "$name" = ".package-lock.json" ] && continue
+            cp -R "$dep" "$NPM_HOME/node_modules/node-gyp/node_modules/$name"
+          done
+          BUNDLED="$NPM_HOME/node_modules/node-gyp/bin/node-gyp.js"
+          ACTUAL="$(node "$BUNDLED" --version)"
+          echo "bundled node-gyp is now: $ACTUAL"
+          case "$ACTUAL" in
+            v1[3-9].*|v[2-9][0-9].*) echo "ok — this one knows Visual Studio 2026" ;;
+            *) echo "the bundled node-gyp is still $ACTUAL; npm ci would fail on Visual Studio 2026, so stopping here rather than letting it fail later with a stack trace"; exit 1 ;;
+          esac
+          # --version does not load node-gyp's dependencies, so it passed even
+          # when undici was missing and configure failed a step later. Load the
+          # module that needs them.
+          WIN_NPM_HOME="$(cygpath -m "$NPM_HOME")"
+          echo "windows native npm home for require: $WIN_NPM_HOME"
+          node -e "try { require('$WIN_NPM_HOME/node_modules/node-gyp/lib/download.js'); } catch (err) { console.error('node-gyp verification failed. Real error:', err); process.exit(1); }" \
+            || { echo "node-gyp is installed but verification failed (see real error above)"; exit 1; }
+          echo "ok — and it can load its dependencies"
       - name: Build package distribution
         run: |
           npm ci

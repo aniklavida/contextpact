@@ -15,17 +15,26 @@ import {
 
 describe("MCP Server approval gate and lifecycle tools", () => {
   let tempDir: string;
+  let servers: ReturnType<typeof createServer>[] = [];
 
   beforeEach(() => {
+    servers = [];
     tempDir = mkdtempSync(join(tmpdir(), "contextpact-mcp-test-"));
     initializeWorkspace(tempDir, "MCP Test Workspace");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(servers.map((s) => s.close()));
     if (existsSync(tempDir)) {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  function createTestServer(options?: Parameters<typeof createServer>[0]) {
+    const server = createServer(options);
+    servers.push(server);
+    return server;
+  }
 
   function getTool(server: ReturnType<typeof createServer>, name: string) {
     const tools = (
@@ -45,7 +54,7 @@ describe("MCP Server approval gate and lifecycle tools", () => {
 
   it("a proposal made through the default MCP profile cannot be approved through that same profile", async () => {
     // Server running with default MCP profile
-    const defaultServer = createServer({ workspaceRoot: tempDir });
+    const defaultServer = createTestServer({ workspaceRoot: tempDir });
 
     const proposeTool = getTool(defaultServer, "context_propose");
     const getToolFn = getTool(defaultServer, "context_get");
@@ -99,7 +108,7 @@ describe("MCP Server approval gate and lifecycle tools", () => {
 
   it("an elevated MCP profile can approve proposals through the approval gate", async () => {
     // 1. Propose through default server
-    const defaultServer = createServer({ workspaceRoot: tempDir });
+    const defaultServer = createTestServer({ workspaceRoot: tempDir });
     const proposeTool = getTool(defaultServer, "context_propose");
 
     await proposeTool(
@@ -119,7 +128,7 @@ describe("MCP Server approval gate and lifecycle tools", () => {
       source: "human",
       profile: "elevated",
     };
-    const elevatedServer = createServer({
+    const elevatedServer = createTestServer({
       workspaceRoot: tempDir,
       actor: elevatedActor,
     });
@@ -150,7 +159,7 @@ describe("MCP Server approval gate and lifecycle tools", () => {
   });
 
   it("allows default MCP profile to write operational task notes immediately", async () => {
-    const defaultServer = createServer({ workspaceRoot: tempDir });
+    const defaultServer = createTestServer({ workspaceRoot: tempDir });
     const proposeTool = getTool(defaultServer, "context_propose");
 
     const result = (await proposeTool(
@@ -201,7 +210,7 @@ describe("MCP Server approval gate and lifecycle tools", () => {
     );
     service.close();
 
-    const server = createServer({ workspaceRoot: tempDir });
+    const server = createTestServer({ workspaceRoot: tempDir });
     const packTool = getTool(server, "context_pack");
 
     const packResult = (await packTool({ workspace: tempDir }, {})) as {
@@ -248,7 +257,7 @@ describe("MCP Server approval gate and lifecycle tools", () => {
     );
     service.close();
 
-    const server = createServer({ workspaceRoot: tempDir });
+    const server = createTestServer({ workspaceRoot: tempDir });
     const searchTool = getTool(server, "context_search");
     const packTool = getTool(server, "context_pack");
 
@@ -319,7 +328,7 @@ describe("MCP Server approval gate and lifecycle tools", () => {
     });
     service.close();
 
-    const server = createServer({ workspaceRoot: tempDir });
+    const server = createTestServer({ workspaceRoot: tempDir });
     const createTool = getTool(server, "handoff_create");
     const getToolFn = getTool(server, "handoff_get");
     const resumeTool = getTool(server, "handoff_resume");
@@ -411,7 +420,7 @@ describe("MCP Server approval gate and lifecycle tools", () => {
   });
 
   it("proposes decisions and manages task lifecycle via MCP tools", async () => {
-    const server = createServer({ workspaceRoot: tempDir });
+    const server = createTestServer({ workspaceRoot: tempDir });
     const decisionTool = getTool(server, "decision_propose");
     const taskCreateTool = getTool(server, "task_create");
     const taskClaimTool = getTool(server, "task_claim");
