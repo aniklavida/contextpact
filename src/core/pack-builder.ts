@@ -422,6 +422,29 @@ export function buildContextPack(
   };
 }
 
+/**
+ * Produces a fenced code block whose opening fence is always longer than the
+ * longest run of backticks in the content, preventing content from closing the
+ * surrounding fence early.
+ */
+export function fencedBlock(lang: string, content: string): string {
+  // Find the longest consecutive run of backticks in the content
+  let maxRun = 0;
+  let run = 0;
+  for (const ch of content) {
+    if (ch === "`") {
+      run++;
+      if (run > maxRun) maxRun = run;
+    } else {
+      run = 0;
+    }
+  }
+  // Fence must be at least 3 backticks and at least one longer than any run
+  const fenceLen = Math.max(3, maxRun + 1);
+  const fence = "`".repeat(fenceLen);
+  return `${fence}${lang}\n${content}\n${fence}`;
+}
+
 export function renderContextPackMarkdown(pack: ContextPack): string {
   const lines: string[] = [];
   lines.push("# CONTEXT PACK");
@@ -472,9 +495,7 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
         lines.push(`- Token estimate: ${item.tokenEstimate}`);
       }
       lines.push("");
-      lines.push("```context-data");
-      lines.push(item.content);
-      lines.push("```");
+      lines.push(fencedBlock("context-data", item.content));
       lines.push("");
     }
   }
