@@ -55,4 +55,4 @@ The v1 permission model prevents accidental cross-scope access by correctly conf
 
 ## Evolution
 
-Schema migrations are ordered and reversible where practical. Cloud/team sync, embeddings and a dashboard require separate evidence and design decisions.
+Schema migrations are ordered and reversible where practical. Team/remote sync is planned for v1.0 as a self-hosted adapter — a local server, optionally exposed on the network, authenticated by a shared key or password — not yet implemented; protocol, conflict resolution and test coverage are open design work for a future implementation effort. Hosted cloud sync, embeddings and a dashboard remain deferred and require separate evidence and design decisions.
