@@ -50,9 +50,13 @@ ContextPact is a local-first context and coordination layer for people who move 
 - Release states are review, done, blocked and planned.
 - Handoffs include outcome, evidence, blockers and one next action.
 
+## Team and remote sync
+
+Planned for v1.0 as a self-hosted adapter: a local server, optionally exposed on the network, authenticated by a shared key or password. Not yet implemented — the protocol, conflict resolution model and test coverage are future work, to be scoped in a later implementation effort.
+
 ## Deferred
 
-Hosted accounts, cloud sync, realtime multi-human teams, large dashboard/Kanban, autonomous routing/swarm, required vector/graph databases, automatic capture of every conversation and mobile apps.
+Hosted accounts, a cloud relay, realtime multi-human teams, large dashboard/Kanban, autonomous routing/swarm, required vector/graph databases, automatic capture of every conversation and mobile apps.
 
 ## v1 acceptance
 
