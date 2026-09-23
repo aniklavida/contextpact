@@ -6,6 +6,11 @@ All notable changes will be documented here.
 
 ### Added
 
+- End-to-end coding workflow proof demo (`demos/coding-demo.mjs`) exercising clean workspace initialization, Claude Code host connection, architectural rule approval, scoped task coordination, lease conflict rejection, durable decision proposal and approval, evidence-bearing handoffs, multi-agent resumption, and workspace doctor diagnostics.
+- End-to-end research workflow proof demo (`demos/research-demo.mjs`) demonstrating the domain-agnostic ContextPact layer on geochemical and materials science research without coding-specific schema concepts, exercising primary sources, empirical facts, working hypotheses, specialist task claims, evidence-bearing handoff, explicit hypothesis supersession, deterministic token-budgeted context packing with provenance and omission tracking, and FTS5 literature search.
+- Proof demos automated test suite (`tests/proof-demos.test.ts`) validating unattended execution of both proof workflows and enforcing vocabulary purity against coding-specific terminology in research artifacts.
+- Package scripts `demo:coding`, `demo:research`, and `demo` in `package.json` for executing workflow proofs from the command line.
+
 - Cross-platform CI matrix covering macOS, Linux, and Windows runners for test execution and clean-install validation.
 - Clean package install verification installing packed tarballs into isolated directories outside repository checkouts and exercising installed binaries (`init`, `status`).
 - Native-module diagnostic logging in CI verifying `better-sqlite3` prebuilds and source compilation paths.

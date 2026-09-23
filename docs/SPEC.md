@@ -67,4 +67,4 @@ Hosted accounts, a cloud relay, realtime multi-human teams, large dashboard/Kanb
 - Proposed knowledge requires approval; superseded decisions stay out of default packs.
 - [x] Obsidian edits reconcile and become searchable (proven in tests/obsidian.test.ts).
 - Recovery, export and backup pass.
-- Coding and research demos complete from clean workspaces.
+- [x] Coding and research demos complete from clean workspaces (proven in tests/proof-demos.test.ts, demos/coding-demo.mjs, and demos/research-demo.mjs).
