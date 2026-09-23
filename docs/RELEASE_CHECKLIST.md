@@ -4,7 +4,7 @@
 
 - [ ] Every v1 requirement in `SPEC.md` is implemented and tested.
 - [ ] Deferred features are not advertised as supported.
-- [ ] Coding and research workflows pass from clean workspaces.
+- [x] Coding and research workflows pass from clean workspaces (verified unattended on macOS via [demos/coding-demo.mjs](../demos/coding-demo.mjs) and [demos/research-demo.mjs](../demos/research-demo.mjs); automated in tests/proof-demos.test.ts).
 
 ## Compatibility
 

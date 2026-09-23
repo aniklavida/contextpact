@@ -30,6 +30,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "npm run typecheck && npm run test && npm run build",
+    "demo": "node demos/coding-demo.mjs && node demos/research-demo.mjs",
+    "demo:coding": "node demos/coding-demo.mjs",
+    "demo:research": "node demos/research-demo.mjs",
     "dev": "tsx src/cli.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
