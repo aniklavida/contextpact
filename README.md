@@ -24,12 +24,17 @@ Implemented and tested in the current foundation:
 - Dual-store workspace backup and point-in-time restore covering both Markdown vault and SQLite database.
 - Portable workspace export and import with deterministic ID collision policies (skip, replace, error).
 - Workspace doctor diagnosing layout, schema versions, index freshness, orphaned files, expired leases, missing provenance, and rebuilt database state.
+- Obsidian-compatible external vault editing, body and frontmatter reconciliation, external rename tracking, untouched plain notes, and non-destructive conflict surfacing.
+- Cross-platform clean-package installation and native-module packaging with enforced Node.js runtime floor (`>=22.14.0`).
+- End-to-end automated proof workflows for software development and domain-agnostic research (`demos/coding-demo.mjs`, `demos/research-demo.mjs`).
+- Complete reference documentation and mechanical drift test suite for CLI commands and MCP tools.
+- Troubleshooting, privacy, and schema migration guides.
 
 Planned for v1.0 and not yet advertised as supported:
 
-- Clean-machine recorded release evidence for Claude Code, Codex, and Cursor host integrations.
-- Obsidian edit reconciliation workflow and packaging.
-- Cross-platform clean-install and end-to-end proof.
+- Clean-machine recorded release evidence for Claude Code, Codex, and Cursor host integrations (adapters are experimental).
+- Self-hosted team and remote synchronization adapter.
+- npm registry package publication.
 
 ## Intended experience
 
@@ -103,7 +108,7 @@ Ten CLI maintenance and runner commands have no MCP counterpart:
 - CLI and MCP call the same transport-independent core.
 - Obsidian may edit the Markdown layer but is never required.
 
-See [the product specification](docs/SPEC.md), [architecture](docs/ARCHITECTURE.md), [roadmap](docs/ROADMAP.md), [native modules](docs/NATIVE_MODULES.md) and [release checklist](docs/RELEASE_CHECKLIST.md).
+See [the product specification](docs/SPEC.md), [architecture](docs/ARCHITECTURE.md), [roadmap](docs/ROADMAP.md), [native modules](docs/NATIVE_MODULES.md), [threat model](docs/THREAT_MODEL.md), [release checklist](docs/RELEASE_CHECKLIST.md), [CLI reference](docs/CLI_REFERENCE.md), [MCP tool reference](docs/MCP_REFERENCE.md), [troubleshooting guide](docs/TROUBLESHOOTING.md), [privacy guide](docs/PRIVACY.md), and [migration guide](docs/MIGRATION.md).
 
 ## Development
 
