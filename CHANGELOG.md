@@ -6,6 +6,18 @@ All notable changes will be documented here.
 
 ### Added
 
+- Complete CLI reference documentation (`docs/CLI_REFERENCE.md`) covering every command, subcommand, argument, and option flag.
+- Complete MCP tool reference documentation (`docs/MCP_REFERENCE.md`) covering all 15 registered tools across default and elevated profiles with input schemas and behavioral contracts.
+- Mechanical drift test suite (`tests/drift.test.ts`) guaranteeing zero drift between code command/tool registries and reference documentation.
+- Troubleshooting guide (`docs/TROUBLESHOOTING.md`) documenting native module installation, host connection, database corruption recovery, and external edit conflict handling.
+- Privacy guide (`docs/PRIVACY.md`) detailing plaintext local storage, zero telemetry, and remote model provider routing.
+- Workspace schema migration guide (`docs/MIGRATION.md`) documenting SQLite schema migration ordering, STRICT enforcement, and reversibility.
+- Threat model documentation (`docs/THREAT_MODEL.md`) covering five workspace threat vectors and adversarial prompt-injection test suite (`tests/pack-injection.test.ts`) with dynamic backtick fence sizing.
+- Canonical milestone numbering (M1 through M5) formalized in `docs/ROADMAP.md` with M1 Foundation marked complete.
+- Team and remote synchronization documented as a planned v1.0 self-hosted adapter in specification and architecture docs.
+- Windows CI node-gyp 13 replacement for Visual Studio 2026 detection and cygpath path translation in clean-install and test workflows.
+- MCP server database connection caching per resolved workspace root and explicit cleanup on server close.
+
 - End-to-end coding workflow proof demo (`demos/coding-demo.mjs`) exercising clean workspace initialization, Claude Code host connection, architectural rule approval, scoped task coordination, lease conflict rejection, durable decision proposal and approval, evidence-bearing handoffs, multi-agent resumption, and workspace doctor diagnostics.
 - End-to-end research workflow proof demo (`demos/research-demo.mjs`) demonstrating the domain-agnostic ContextPact layer on geochemical and materials science research without coding-specific schema concepts, exercising primary sources, empirical facts, working hypotheses, specialist task claims, evidence-bearing handoff, explicit hypothesis supersession, deterministic token-budgeted context packing with provenance and omission tracking, and FTS5 literature search.
 - Proof demos automated test suite (`tests/proof-demos.test.ts`) validating unattended execution of both proof workflows and enforcing vocabulary purity against coding-specific terminology in research artifacts.
@@ -14,7 +26,7 @@ All notable changes will be documented here.
 - Cross-platform CI matrix covering macOS, Linux, and Windows runners for test execution and clean-install validation.
 - Clean package install verification installing packed tarballs into isolated directories outside repository checkouts and exercising installed binaries (`init`, `status`).
 - Native-module diagnostic logging in CI verifying `better-sqlite3` prebuilds and source compilation paths.
-- Enforced and tested Node.js engine floor (`>=22.12.0`) in CI and CLI entrypoint, proving refusal of unsupported Node versions.
+- Enforced and tested Node.js engine floor (`>=22.14.0`) in CI and CLI entrypoint, proving refusal of unsupported Node versions.
 - Documentation of native-module prebuilds, fallback compiler toolchain prerequisites, and Windows SQLite WAL filesystem behavior.
 - Windows path normalization and empty root basename fallback handling in workspace layout.
 

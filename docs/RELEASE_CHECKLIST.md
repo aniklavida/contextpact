@@ -22,11 +22,11 @@
 
 ## Documentation and package
 
-- [ ] README examples match the released behaviour.
-- [ ] CLI and MCP references are complete.
-- [ ] Troubleshooting, privacy and migration guides are complete.
+- [x] README examples match the released behaviour (verified against implemented CLI entrypoint and MCP tools).
+- [x] CLI and MCP references are complete (documented in [docs/CLI_REFERENCE.md](CLI_REFERENCE.md) and [docs/MCP_REFERENCE.md](MCP_REFERENCE.md); automated drift test in [tests/drift.test.ts](../tests/drift.test.ts)).
+- [x] Troubleshooting, privacy and migration guides are complete (documented in [docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md), [docs/PRIVACY.md](PRIVACY.md), and [docs/MIGRATION.md](MIGRATION.md)).
 - [ ] Package contents and provenance are verified.
-- [ ] Changelog and version agree.
+- [x] Changelog and version agree (verified in [CHANGELOG.md](../CHANGELOG.md) Unreleased section against package.json 0.0.0).
 
 ## Publication
 
