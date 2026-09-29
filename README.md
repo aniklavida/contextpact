@@ -6,7 +6,7 @@ ContextPact is a local-first context and coordination layer for people who move 
 
 ## Project status
 
-ContextPact is under active pre-release development. The repository currently contains the approved v1 specification, architecture, repository foundation and an experimental workspace bootstrap. It is **not yet a production-ready context system and has not been released to npm**.
+ContextPact is under active pre-release development. Every v1 requirement in the specification is implemented and covered by the test suite, but it is **not yet a production-ready context system and has not been released to npm**. Host integrations remain experimental, and host verification is still outstanding.
 
 Implemented and tested in the current foundation:
 

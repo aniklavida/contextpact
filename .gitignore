@@ -2,6 +2,12 @@ node_modules/
 dist/
 coverage/
 .contextpact/
+
+# Scratch output from release verification: packed tarballs, checksums,
+# fresh-home/fresh-install probe directories and probe transcripts. These
+# contain absolute machine paths, which the public-safety CI job rejects in
+# tracked files, so they are evidence to be read and discarded, never committed.
+.release-evidence/
 *.log
 .DS_Store
 .env
