@@ -99,11 +99,12 @@ with the reason stated rather than assumed.
       independent security review has been performed, so this cannot be ticked by
       the author's own test run.
 - [x] No secrets or machine-specific paths exist in tracked files. Verified by
-      `git grep` over tracked files for absolute `/Users/`, `/home/` and
-      `C:\Users\` paths (no matches) and for credential patterns including
-      `AKIA*`, `ghp_*`, `github_pat_*`, `sk-*` and private-key headers (no
-      matches; the only hits are prose and token-budgeting source). Enforced
-      continuously by the `public-safety` job in CI.
+      `git grep` over tracked files for absolute per-user home directory paths
+      in the macOS, Linux and Windows forms (no matches) and for credential
+      patterns including AWS access key IDs, GitHub personal access tokens,
+      `sk-` provider keys and private-key headers (no matches; the only hits are
+      prose and token-budgeting source). Enforced continuously by the
+      `public-safety` job in CI.
 
 ## Documentation and package
 
