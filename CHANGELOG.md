@@ -4,6 +4,11 @@ All notable changes will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- `npm test` and `npm run check` now build before running tests, via a `pretest` script. The proof demos and their test suite execute the built CLI at `dist/cli.js`, but `dist/` is gitignored, so on a clean checkout the tests ran before anything was built and both proof demos failed with "Built CLI not found". This broke `npm run check` on a clean checkout on macOS, Linux and Windows alike. Tests previously appeared to pass locally only because a stale `dist/` was already present in the working tree.
+- Raised the proof demo test timeouts. Each demo spawns dozens of CLI subprocesses against a real SQLite database and takes around two seconds on a developer machine, but a loaded CI runner is an order of magnitude slower. At the previous 30 second ceiling the research demo was killed on the Windows runner, and `spawnSync` reported a null exit status, failing the test for a reason unrelated to the demo's behaviour.
+
 ### Added
 
 - Complete CLI reference documentation (`docs/CLI_REFERENCE.md`) covering every command, subcommand, argument, and option flag.

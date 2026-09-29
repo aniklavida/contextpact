@@ -8,93 +8,111 @@ describe("End-to-end proof workflows from clean workspaces", () => {
   const codingDemoPath = join(rootDir, "demos", "coding-demo.mjs");
   const researchDemoPath = join(rootDir, "demos", "research-demo.mjs");
 
-  it("coding demo executes unattended from a clean workspace and completes all coordination milestones", () => {
-    const result = spawnSync(process.execPath, [codingDemoPath], {
-      cwd: rootDir,
-      encoding: "utf8",
-      timeout: 30_000,
-      env: { ...process.env, NODE_ENV: "test" },
-    });
+  // Each demo spawns dozens of CLI subprocesses against a real SQLite
+  // database, and takes around two seconds on a developer machine. A loaded
+  // CI runner, compiling better-sqlite3 from source and running the whole
+  // suite at once, is an order of magnitude slower: at the previous 30s
+  // ceiling the research demo was killed on Windows and spawnSync reported a
+  // null exit status, which failed the test for a reason that had nothing to
+  // do with the demo's behaviour.
+  const DEMO_TIMEOUT_MS = 180_000;
+  const TEST_TIMEOUT_MS = 200_000;
 
-    if (result.status !== 0) {
-      console.error("Coding demo stdout:", result.stdout);
-      console.error("Coding demo stderr:", result.stderr);
-    }
+  it(
+    "coding demo executes unattended from a clean workspace and completes all coordination milestones",
+    () => {
+      const result = spawnSync(process.execPath, [codingDemoPath], {
+        cwd: rootDir,
+        encoding: "utf8",
+        timeout: DEMO_TIMEOUT_MS,
+        env: { ...process.env, NODE_ENV: "test" },
+      });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain(
-      "ContextPact End-to-End Proof Demo: Coding Workflow",
-    );
-    expect(result.stdout).toContain("Payment Service Engine");
-    expect(result.stdout).toContain("Stdio MCP server active");
-    expect(result.stdout).toContain("rule-idempotency-keys");
-    expect(result.stdout).toContain("task-stripe-gw");
-    expect(result.stdout).toContain("task-receipt-svc");
-    expect(result.stdout).toContain("Expected conflict rejection verified");
-    expect(result.stdout).toContain(
-      "Both agents successfully retrieved 'rule-idempotency-keys'",
-    );
-    expect(result.stdout).toContain("dec-stripe-webhook-tolerance");
-    expect(result.stdout).toContain("Decision approved by human-lead");
-    expect(result.stdout).toContain("ho-stripe-to-qa");
-    expect(result.stdout).toContain(
-      "Resumed successfully: lease held by 'agent-qa'",
-    );
-    expect(result.stdout).toContain(
-      "Doctor check passed: workspace healthy, 0 issues detected",
-    );
-    expect(result.stdout).toContain(
-      "Coding Workflow Demo Completed Successfully!",
-    );
-  }, 35_000);
+      if (result.status !== 0) {
+        console.error("Coding demo stdout:", result.stdout);
+        console.error("Coding demo stderr:", result.stderr);
+      }
 
-  it("research demo executes unattended from a clean workspace and completes all coordination and supersession milestones", () => {
-    const result = spawnSync(process.execPath, [researchDemoPath], {
-      cwd: rootDir,
-      encoding: "utf8",
-      timeout: 30_000,
-      env: { ...process.env, NODE_ENV: "test" },
-    });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        "ContextPact End-to-End Proof Demo: Coding Workflow",
+      );
+      expect(result.stdout).toContain("Payment Service Engine");
+      expect(result.stdout).toContain("Stdio MCP server active");
+      expect(result.stdout).toContain("rule-idempotency-keys");
+      expect(result.stdout).toContain("task-stripe-gw");
+      expect(result.stdout).toContain("task-receipt-svc");
+      expect(result.stdout).toContain("Expected conflict rejection verified");
+      expect(result.stdout).toContain(
+        "Both agents successfully retrieved 'rule-idempotency-keys'",
+      );
+      expect(result.stdout).toContain("dec-stripe-webhook-tolerance");
+      expect(result.stdout).toContain("Decision approved by human-lead");
+      expect(result.stdout).toContain("ho-stripe-to-qa");
+      expect(result.stdout).toContain(
+        "Resumed successfully: lease held by 'agent-qa'",
+      );
+      expect(result.stdout).toContain(
+        "Doctor check passed: workspace healthy, 0 issues detected",
+      );
+      expect(result.stdout).toContain(
+        "Coding Workflow Demo Completed Successfully!",
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 
-    if (result.status !== 0) {
-      console.error("Research demo stdout:", result.stdout);
-      console.error("Research demo stderr:", result.stderr);
-    }
+  it(
+    "research demo executes unattended from a clean workspace and completes all coordination and supersession milestones",
+    () => {
+      const result = spawnSync(process.execPath, [researchDemoPath], {
+        cwd: rootDir,
+        encoding: "utf8",
+        timeout: DEMO_TIMEOUT_MS,
+        env: { ...process.env, NODE_ENV: "test" },
+      });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain(
-      "ContextPact End-to-End Proof Demo: Research Workflow",
-    );
-    expect(result.stdout).toContain("Roman Concrete Durability Study");
-    expect(result.stdout).toContain("src-pliny-naturalis");
-    expect(result.stdout).toContain("src-jackson-2017-nature");
-    expect(result.stdout).toContain("fact-tobermorite-growth");
-    expect(result.stdout).toContain("concl-slaking-defect");
-    expect(result.stdout).toContain("Expected lease conflict verified");
-    expect(result.stdout).toContain("ho-petrography-to-spectroscopy");
-    expect(result.stdout).toContain("Resumed by 'dr-okafor-spectroscopy'");
-    expect(result.stdout).toContain("src-seymour-2023-advances");
-    expect(result.stdout).toContain("fact-lime-clast-healing");
-    expect(result.stdout).toContain("concl-autogenous-healing");
-    expect(result.stdout).toContain("status='superseded'");
-    expect(result.stdout).toContain(
-      "Revised conclusion 'concl-autogenous-healing' is PRESENT",
-    );
-    expect(result.stdout).toContain(
-      "Flawed conclusion 'concl-slaking-defect' is EXCLUDED",
-    );
-    expect(result.stdout).toContain("reason='superseded'");
-    expect(result.stdout).toContain("replacedBy='concl-autogenous-healing'");
-    expect(result.stdout).toContain(
-      "100% of context pack items carry explicit author/source/version provenance",
-    );
-    expect(result.stdout).toContain(
-      "Doctor check passed: workspace healthy, 0 issues detected",
-    );
-    expect(result.stdout).toContain(
-      "Research Workflow Demo Completed Successfully!",
-    );
-  }, 35_000);
+      if (result.status !== 0) {
+        console.error("Research demo stdout:", result.stdout);
+        console.error("Research demo stderr:", result.stderr);
+      }
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        "ContextPact End-to-End Proof Demo: Research Workflow",
+      );
+      expect(result.stdout).toContain("Roman Concrete Durability Study");
+      expect(result.stdout).toContain("src-pliny-naturalis");
+      expect(result.stdout).toContain("src-jackson-2017-nature");
+      expect(result.stdout).toContain("fact-tobermorite-growth");
+      expect(result.stdout).toContain("concl-slaking-defect");
+      expect(result.stdout).toContain("Expected lease conflict verified");
+      expect(result.stdout).toContain("ho-petrography-to-spectroscopy");
+      expect(result.stdout).toContain("Resumed by 'dr-okafor-spectroscopy'");
+      expect(result.stdout).toContain("src-seymour-2023-advances");
+      expect(result.stdout).toContain("fact-lime-clast-healing");
+      expect(result.stdout).toContain("concl-autogenous-healing");
+      expect(result.stdout).toContain("status='superseded'");
+      expect(result.stdout).toContain(
+        "Revised conclusion 'concl-autogenous-healing' is PRESENT",
+      );
+      expect(result.stdout).toContain(
+        "Flawed conclusion 'concl-slaking-defect' is EXCLUDED",
+      );
+      expect(result.stdout).toContain("reason='superseded'");
+      expect(result.stdout).toContain("replacedBy='concl-autogenous-healing'");
+      expect(result.stdout).toContain(
+        "100% of context pack items carry explicit author/source/version provenance",
+      );
+      expect(result.stdout).toContain(
+        "Doctor check passed: workspace healthy, 0 issues detected",
+      );
+      expect(result.stdout).toContain(
+        "Research Workflow Demo Completed Successfully!",
+      );
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   it("research workflow contains zero coding-specific concepts in its domain data and schemas", () => {
     const researchDemoSource = readFileSync(researchDemoPath, "utf8");
