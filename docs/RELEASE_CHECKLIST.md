@@ -47,9 +47,9 @@ with the reason stated rather than assumed.
       packs the tarball, installs it into a directory outside the repository
       checkout, and exercises the installed binary with `init` and `status` on
       `ubuntu-latest`, `macos-latest` and `windows-latest`. All three passed in
-      Validate run 36017916456. The `pretest` fix in this branch changes only the
-      test/build script order and does not affect packaging, so that result
-      still stands; it is expected to be re-confirmed on this branch's own run.
+      Validate run 36017916456, and again on this branch in run 36598381290,
+      where all nine jobs including the full test matrix on all three
+      platforms are green.
 - [ ] Claude Code, Codex and Cursor integrations have recorded evidence. **Needs
       a real vendor application.** The adapters are implemented and tested, but
       [connect.test.ts](../tests/connect.test.ts) exercises them against _fixture_
